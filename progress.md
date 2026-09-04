@@ -243,10 +243,17 @@ Test convention established: `it.layer(NodeFileSystem.layer)` +
 disposable temp dirs — no `node:fs/promises` needed. 368/368 tests,
 typecheck clean.
 
-## Phase 7 — Configuration service — IN PROGRESS
+## Phase 7 — Configuration service — DONE, verified
 
-Small, self-contained; single job dispatched: `config/config.ts`
-(local/global precedence, missing-identity error, per §8) — **in flight**.
+`config/config.ts` (297cdc6): local/global contributor.id resolution
+per §8. Read in full myself. Notable: `JSON.parse` silently keeps only
+the last of a duplicate key, so SPEC's "non-unique field" rule needed a
+hand-rolled recursive-descent JSON parser to actually be enforceable —
+the agent caught this and built one rather than skipping the case.
+"Object without `id`" treated same as absent `contributor` (falls
+through to global) — a reasoned judgment call, documented. Required-ID
+error text found pinned at `tests/19-version-boundaries.yaml:87`. 26
+tests (394 total), typecheck clean.
 
 ## Phases 8-12 — NOT STARTED
 8. CLI grammar, dispatch, and commands (`cli/*`, `commands/*`)
@@ -271,3 +278,5 @@ Small, self-contained; single job dispatched: `config/config.ts`
 | 3 | clean | 270/270 |
 | 4 (a+b+c) | clean | 328/328 |
 | 5 (a+b) | clean | 348/348 |
+| 6 (a+b) | clean | 368/368 |
+| 7 | clean | 394/394 |
