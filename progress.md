@@ -83,7 +83,7 @@ since they're untracked in the main checkout.
   consumption, empty-base-only point-5 special case all present as described).
 - Verified myself: typecheck clean; 270/270 tests passing.
 
-## Phase 4 — Deterministic replay core — IN PROGRESS
+## Phase 4 — Deterministic replay core — DONE, verified
 
 Per plan.md, this phase must resolve **Open Spec Issue 2** (research.md:
 scope of "the paths that `P` makes present" in SPEC §6.2's namespace
@@ -136,6 +136,58 @@ Next: dispatch Phase 4's actual implementation (`replay/select.ts`,
 `replay/integrate.ts`, `replay/tiebreak.ts`) as a subagent, with an early
 integration-test checkpoint against the new regression case *before* Phase
 5 (OT) proceeds, per plan.md §6/§7.
+
+**Split into smaller jobs** (user request, after full-Phase-4 dispatches
+kept dying to external kills / API timeouts before landing any files):
+one subagent per module, independent ones in parallel, verify + commit
+each as it lands:
+- 4a `replay/select.ts` + tests (§6.1) — **DONE, verified, committed** (af552a0).
+  18 tests. Ready-set consumption with the three-key order (Snap order of
+  result version, then author bytes, then revision); the hand-traced
+  pin: for two concurrent base-`()` patches, bob@x integrates before
+  alice@x because Snap order compares the alice component first (0 < 1).
+- 4b `replay/tiebreak.ts` + tests (§6.4) — **DONE, verified, committed** (c059338).
+  30 tests. PathState model (absent/text/binary), six rules in order,
+  warning-pair dedupe + sort. The rules are total; §6.2-unreachable
+  combinations resolve by literal rule order (documented + pinned).
+- 4c `replay/integrate.ts` + `replay/replay.ts` + namespace regression
+  checkpoint test (§6.2; depends on 4a+4b) — **DONE, verified, committed**.
+  10 tests (328/328 total). `integratePatch` implements the corrected
+  namespace precheck + four-case dispatch with an injectable `TextTransform`
+  seam (§6.3 left for Phase 5; `OtUnavailableError` when reached without
+  one). `replay()` threads each patch its own exact base tree — the
+  memoized sub-replay of its base version, not the running canonical tree —
+  with a cycle guard. The checkpoint test asserts the corrected scenario
+  (`a/b` = "edited\n", `(a, namespace-wins)`); a second test pins the
+  as-written scenario's true outcome (`a` = "replaced\n", `(a/b,
+  delete-wins)`) with the full ordering trace.
+
+**Phase 4 complete**: 4a + 4b + 4c all verified and committed. The
+deterministic replay core — the heart of the whole system — is done:
+select (§6.1), integrate (§6.2), tiebreak (§6.4), orchestrated replay
+(§6.5's same-bytes guarantee as pure-function determinism). 328/328
+tests, typecheck clean.
+
+**Bug found in my own regression scenario** (caught by the 4c agent's
+hand-trace, then independently re-verified by me against 4a's committed
+ordering tests): the third `tests/11-namespace-conflicts.yaml` scenario
+pinned the wrong expectation. Under §6.1's Snap-order sequencing, bob's
+result version is Snap-lesser than alice's at the `alice@ns` component
+(0 vs 1), so the *editor* (bob) integrates first, the replacer's (alice's)
+precheck never fires (her own deletion empties `C'`), and the as-written
+outcome is honestly `{ a: "replaced\n" }` + `(a/b, delete-wins)`. I had
+authored the scenario assuming the replacer integrates first.
+**Fix applied**: swapped the contributor roles in the YAML (replacer =
+bob@ns in `replaces-namespace`, editor = alice@ns in
+`edits-preexisting-path`) so the replacer genuinely integrates first and
+the namespace precheck fires on the editor's ordinary edit of the
+pre-existing path — which is what the wide-`S` reading is FOR.
+Assertions unchanged (`a/b` = "edited\n", `auto-resolved a:
+namespace-wins`). The SPEC.md §6.2 wording fix itself needed no change —
+only the test scenario's expectations were wrong. The 4c agent was
+instructed to implement §6.2 faithfully, assert the as-written scenario's
+TRUE outcome as a second test, and use the corrected scenario for the
+namespace-wins checkpoint.
 
 ## Phases 5-12 — NOT STARTED
 

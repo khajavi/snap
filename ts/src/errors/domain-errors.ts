@@ -164,6 +164,26 @@ export class ChangeBaseConflictError extends Data.TaggedError("ChangeBaseConflic
 }> {}
 
 // ---------------------------------------------------------------------------
+// Replay errors — integration-time (SPEC.md §6.2 case 3 / §6.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * SPEC.md §6.2 case 3 arose while integrating a patch — `B`, `C`, and `T`
+ * are all text and the incoming change is a text edit — so resolving the
+ * path requires transforming the incoming edit through the aggregate
+ * context edit `Q = diff(B, C)` per SPEC.md §6.3, but no transform was
+ * injected through replay's `textTransform` seam. This is the Phase 4 /
+ * Phase 5 boundary made explicit: Phase 4 detects the case and refuses to
+ * guess a merge, Phase 5's OT module wires the real §6.3 transform in
+ * through the seam. Carries the offending path and the dot of the patch
+ * that hit the case, so a caller can name both in a diagnostic.
+ */
+export class OtUnavailableError extends Data.TaggedError("OtUnavailableError")<{
+  readonly patch: DotRef;
+  readonly path: string;
+}> {}
+
+// ---------------------------------------------------------------------------
 // Corruption errors (SPEC.md §1.1 invariant 7, §3.5, §4.2)
 // ---------------------------------------------------------------------------
 

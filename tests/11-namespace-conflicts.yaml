@@ -138,13 +138,13 @@ steps:
       to: edits-preexisting-path
   - run:
       cwd: replaces-namespace
-      args: [config, contributor.id, alice@ns]
+      args: [config, contributor.id, bob@ns]
       expect:
         - type: exit_code
           value: 0
   - run:
       cwd: edits-preexisting-path
-      args: [config, contributor.id, bob@ns]
+      args: [config, contributor.id, alice@ns]
       expect:
         - type: exit_code
           value: 0
