@@ -214,3 +214,4 @@ namespace-wins checkpoint.
 | 1 (+ path backfill) | clean | 164/164 |
 | 2 | clean | 164/164 (included above; ran concurrently with Phase 1) |
 | 3 | clean | 270/270 |
+| 4 (a+b+c) | clean | 328/328 |
