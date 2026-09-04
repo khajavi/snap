@@ -189,16 +189,30 @@ instructed to implement §6.2 faithfully, assert the as-written scenario's
 TRUE outcome as a second test, and use the corrected scenario for the
 namespace-wins checkpoint.
 
-## Phase 5 — Operational transform — IN PROGRESS
+## Phase 5 — Operational transform — DONE, verified
 
 Split into two per the split-subagent-work-into-small-steps memory
 preference:
 - 5a `replay/ot.ts`'s `transformEditThroughContext` (§6.3's pure
-  transform table, isolated) + unit tests — **dispatched, in flight**.
-- 5b `snapTextTransform` (composes diff + 5a + `applyEditScript`) +
+  transform table) + 17 tests — **DONE, verified, committed** (4dce54e).
+  All six table rows, Q-insert priority, count-splitting via
+  `min(P.remaining, Q.remaining)`, output coalescing. Read the module
+  in full: exact match to SPEC's table.
+- 5b `snapTextTransform` (composes `diff` + 5a + `applyEditScript`) +
   wiring into `replay()`'s default `textTransform` + end-to-end
-  convergence tests (three-way case, ot-matrix sample) — to dispatch
-  once 5a lands.
+  convergence tests — **DONE, verified, committed** (735fb47). 3 new
+  tests (348 total): a minimal two-patch sanity case, an
+  `tests/22-ot-matrix.yaml` row, and the full
+  `tests/18-three-way-convergence.yaml` scenario replayed through the
+  new default, converging to exactly "B\nA\nend\n" with zero warnings.
+  `replay()` now performs real OT by default; the `OtUnavailableError`
+  coverage moved to a direct `integratePatch` call (its own signature
+  untouched) so it still exists and still passes. Read the diff myself:
+  minimal, exactly as reported, no side effects on other files.
+
+**Phase 5 complete**: 348/348 tests, typecheck clean. Deterministic
+replay + OT (§6.1-§6.5) is now fully implemented and self-consistent —
+no more seams or stubs in the replay core.
 
 ## Phases 6-12 — NOT STARTED
 6. Filesystem materialization + working-tree scanning (`fs/*`)
@@ -224,3 +238,4 @@ preference:
 | 2 | clean | 164/164 (included above; ran concurrently with Phase 1) |
 | 3 | clean | 270/270 |
 | 4 (a+b+c) | clean | 328/328 |
+| 5 (a+b) | clean | 348/348 |
