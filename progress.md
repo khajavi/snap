@@ -243,8 +243,12 @@ Test convention established: `it.layer(NodeFileSystem.layer)` +
 disposable temp dirs — no `node:fs/promises` needed. 368/368 tests,
 typecheck clean.
 
-## Phases 7-12 — NOT STARTED
-7. Configuration service (`config/*`)
+## Phase 7 — Configuration service — IN PROGRESS
+
+Small, self-contained; single job dispatched: `config/config.ts`
+(local/global precedence, missing-identity error, per §8) — **in flight**.
+
+## Phases 8-12 — NOT STARTED
 8. CLI grammar, dispatch, and commands (`cli/*`, `commands/*`)
 9. Presentation layer (`presentation/*`) — also resolves Open Spec Issue 6
    (§7.11 literal-prefix diff coloring) via a SPEC wording addition + new
