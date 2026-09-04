@@ -214,8 +214,18 @@ preference:
 replay + OT (§6.1-§6.5) is now fully implemented and self-consistent —
 no more seams or stubs in the replay core.
 
-## Phases 6-12 — NOT STARTED
-6. Filesystem materialization + working-tree scanning (`fs/*`)
+## Phase 6 — Filesystem materialization + working-tree scanning — IN PROGRESS
+
+First phase touching real I/O and the first real Effect service in this
+codebase (Phases 0-5 were pure/synchronous). Split into two parallel
+jobs:
+- 6a `fs/tree-scan.ts` (working-tree scan, `.snap` exclusion,
+  unsupported-entry detection, builds a `Tree`) — **dispatched, in flight**.
+- 6b `fs/materialize.ts` (install a `Tree` onto disk) +
+  `fs/atomic-write.ts` (same-directory temp-then-rename for
+  `repository.json`, §10) — **dispatched, in flight** (parallel with 6a).
+
+## Phases 7-12 — NOT STARTED
 7. Configuration service (`config/*`)
 8. CLI grammar, dispatch, and commands (`cli/*`, `commands/*`)
 9. Presentation layer (`presentation/*`) — also resolves Open Spec Issue 6
