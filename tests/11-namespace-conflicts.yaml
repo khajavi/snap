@@ -110,3 +110,73 @@ steps:
       - type: file_text_equals
         path: early-ancestor/x/y
         value: "descendant\n"
+  - run:
+      args: [init, seed-repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: seed-repo
+      args: [config, contributor.id, seed@ns]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: seed-repo/a/b
+      text: "orig\n"
+  - run:
+      cwd: seed-repo
+      args: [commit, seed]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: seed-repo
+      to: replaces-namespace
+  - copy_tree:
+      from: seed-repo
+      to: edits-preexisting-path
+  - run:
+      cwd: replaces-namespace
+      args: [config, contributor.id, alice@ns]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: edits-preexisting-path
+      args: [config, contributor.id, bob@ns]
+      expect:
+        - type: exit_code
+          value: 0
+  - remove:
+      path: replaces-namespace/a
+  - write_file:
+      path: replaces-namespace/a
+      text: "replaced\n"
+  - run:
+      cwd: replaces-namespace
+      args: [commit, replace]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: edits-preexisting-path/a/b
+      text: "edited\n"
+  - run:
+      cwd: edits-preexisting-path
+      args: [commit, edit]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: replaces-namespace
+      args: [merge, ../edits-preexisting-path]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stderr_equals
+          value: "warning: auto-resolved a: namespace-wins\n"
+  - assert:
+      - type: file_text_equals
+        path: replaces-namespace/a/b
+        value: "edited\n"

@@ -343,9 +343,10 @@ For incoming patch `P`, materialize its exact base tree `B`. Let `C` be the
 canonical tree built so far. It contains `B` plus only earlier concurrent
 effects.
 
-First resolve namespace conflicts for the patch as a whole. Let `S` be the
-paths that `P` makes present, and let `C'` be `C` with every path that `P`
-authored as a deletion removed. If a path in `S` has a different current
+First resolve namespace conflicts for the patch as a whole. Let `S` be every
+path present in `P`'s authored result — every path `P` creates, edits, or
+replaces, not only paths absent from `B`. Let `C'` be `C` with every path that
+`P` authored as a deletion removed. If a path in `S` has a different current
 ancestor or descendant in `C'`, mark the incoming path for installation as its
 authored result `T` and mark every conflicting current path for removal. Each
 removed path emits `namespace-wins`. These decisions override the per-path
