@@ -32,7 +32,10 @@
  * for.
  */
 
-import type { EditOp, EditScript } from "../domain/diff.js";
+import { applyEditScript, diffTokens, type EditOp, type EditScript } from "../domain/diff.js";
+import type { TrackedPath } from "../domain/path.js";
+import type { Token } from "../domain/text.js";
+import type { TextTransform } from "./integrate.js";
 
 // ---------------------------------------------------------------------------
 // A cursor over one op stream, tracking how much of the current op remains
@@ -224,3 +227,38 @@ export function transformEditThroughContext(incomingEdit: EditScript, contextEdi
 
   return coalesce(raw);
 }
+
+// ---------------------------------------------------------------------------
+// The real §6.3 seam (Phase 5): `replay/integrate.ts`'s `TextTransform`
+// ---------------------------------------------------------------------------
+
+/**
+ * The real `TextTransform` (`replay/integrate.ts`'s §6.2 case 3 seam),
+ * wired in as `replay/replay.ts`'s default so replay performs real OT
+ * without a caller having to supply one: derives the aggregate context
+ * edit `Q = diff(B, C)` per SPEC.md §5 (`domain/diff.ts`'s `diffTokens`),
+ * transforms the incoming edit `P` through `Q` per §6.3
+ * (`transformEditThroughContext`, above), and applies the transformed
+ * script to the current tokens `C` (`domain/diff.ts`'s `applyEditScript`)
+ * to produce the resolved `PathState`.
+ *
+ * `path` is unused by the transform itself — §6.3's algorithm is purely a
+ * function of the three token/edit-script values — but is part of the
+ * shared `TextTransform` shape so the seam can name the path in a future
+ * error or log without changing the signature.
+ *
+ * Imports `TextTransform`'s type from `replay/integrate.ts` rather than
+ * redeclaring it: `integrate.ts` does not import `ot.ts`, so this is a
+ * type-only import in the opposite direction and creates no runtime
+ * import cycle (erased entirely under `isolatedModules`).
+ */
+export const snapTextTransform: TextTransform = (
+  _path: TrackedPath,
+  baseTokens: ReadonlyArray<Token>,
+  currentTokens: ReadonlyArray<Token>,
+  incomingEdit: EditScript,
+) => {
+  const contextEdit = diffTokens(baseTokens, currentTokens);
+  const transformed = transformEditThroughContext(incomingEdit, contextEdit);
+  return { _tag: "Text", tokens: applyEditScript(currentTokens, transformed) };
+};

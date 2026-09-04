@@ -35,6 +35,7 @@ import type { Patch, VersionPairs } from "../domain/patch.js";
 import { Version } from "../domain/version.js";
 import { OtUnavailableError } from "../errors/domain-errors.js";
 import { integratePatch, type TextTransform, type Tree } from "./integrate.js";
+import { snapTextTransform } from "./ot.js";
 import { selectAndOrderPatches, type PatchSelectionError } from "./select.js";
 import { finalizeWarningPairs, type WarningPair } from "./tiebreak.js";
 
@@ -78,14 +79,16 @@ const versionOfPairs = (pairs: VersionPairs): Version => {
  * each patch integrating against its own base tree — the memoized replay
  * of that patch's base version.
  *
- * `textTransform` (optional) is §6.3's seam; without it, any §6.2 case 3
- * the replay reaches fails the whole replay with `OtUnavailableError`
- * rather than guessing a merge — Phase 5 injects the real transform.
+ * `textTransform` (optional) is §6.3's seam; when omitted it defaults to
+ * `replay/ot.ts`'s `snapTextTransform`, so replay performs real OT by
+ * default — the entire point of Phase 5. A caller can still pass its own
+ * (e.g. a test asserting `OtUnavailableError` at the `integratePatch`
+ * layer, or a stub) to observe or override the seam.
  */
 export function replay(
   target: Version,
   patches: ReadonlyArray<Patch>,
-  textTransform?: TextTransform,
+  textTransform: TextTransform = snapTextTransform,
 ): Either.Either<ReplayOutcome, ReplayError> {
   /** Memoized replays by canonical version string, base versions included. */
   const cache = new Map<string, Either.Either<ReplayOutcome, ReplayError>>();

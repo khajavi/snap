@@ -4,7 +4,7 @@ import { parseTrackedPath, type TrackedPath } from "../../src/domain/path.js";
 import { decodePatch, type Patch } from "../../src/domain/patch.js";
 import { Version } from "../../src/domain/version.js";
 import { replay } from "../../src/replay/replay.js";
-import type { Tree } from "../../src/replay/integrate.js";
+import { integratePatch, type Tree } from "../../src/replay/integrate.js";
 import type { PathState, WarningPair, WarningReason } from "../../src/replay/tiebreak.js";
 
 // Canonical replay end to end (SPEC.md §6.1-§6.2): §6.1 selects and orders
@@ -389,8 +389,17 @@ describe("replay: the §6.2 case 3 / §6.3 OT seam", () => {
     ]),
   ];
 
-  it("concurrent text/text edit on one path with no transform injected fails with OtUnavailableError", () => {
-    const result = replay(versionOrThrow("(alice@ns->1,bob@ns->1,seed@ns->1)"), concurrentEdits());
+  it("concurrent text/text edit on one path with no transform injected fails with OtUnavailableError (replay/replay.ts now defaults to real OT, so this is exercised directly at replay/integrate.ts's integratePatch, whose own signature Phase 5 leaves untouched)", () => {
+    // The same shape §6.2 case 3 sees mid-`concurrentEdits()`: alice@ns's
+    // patch integrating against B = {a/b: "orig\n"} (bob@ns's base tree)
+    // and C = {a/b: "beta\n"} (the tree after bob@ns's edit landed).
+    const baseTree: Tree = new Map([[path("a/b"), textState(["orig\n"])]]);
+    const canonicalTree: Tree = new Map([[path("a/b"), textState(["beta\n"])]]);
+    const alicePatch = makePatch("alice@ns", 1, [["seed@ns", 1]], "alpha", [
+      { type: "text", path: "a/b", edit: [{ delete: 1 }, { insert: ["alpha\n"] }] },
+    ]);
+
+    const result = integratePatch(baseTree, canonicalTree, alicePatch);
 
     expect(Either.isLeft(result)).toBe(true);
     if (Either.isLeft(result)) {
