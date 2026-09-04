@@ -189,9 +189,18 @@ instructed to implement §6.2 faithfully, assert the as-written scenario's
 TRUE outcome as a second test, and use the corrected scenario for the
 namespace-wins checkpoint.
 
-## Phases 5-12 — NOT STARTED
+## Phase 5 — Operational transform — IN PROGRESS
 
-5. Operational transform (`replay/ot.ts`)
+Split into two per the split-subagent-work-into-small-steps memory
+preference:
+- 5a `replay/ot.ts`'s `transformEditThroughContext` (§6.3's pure
+  transform table, isolated) + unit tests — **dispatched, in flight**.
+- 5b `snapTextTransform` (composes diff + 5a + `applyEditScript`) +
+  wiring into `replay()`'s default `textTransform` + end-to-end
+  convergence tests (three-way case, ot-matrix sample) — to dispatch
+  once 5a lands.
+
+## Phases 6-12 — NOT STARTED
 6. Filesystem materialization + working-tree scanning (`fs/*`)
 7. Configuration service (`config/*`)
 8. CLI grammar, dispatch, and commands (`cli/*`, `commands/*`)
