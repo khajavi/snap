@@ -1,15 +1,24 @@
 {
   "name": "snap",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",
-    "build": "tsc --noEmit"
+    "build": "npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "effect": "^3.22.1",
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-node": "^0.108.1"
   },
   "devDependencies": {
+    "@effect/vitest": "^0.30.0",
     "@types/node": "^22.18.0",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.7"
   }
 }
