@@ -214,16 +214,34 @@ preference:
 replay + OT (§6.1-§6.5) is now fully implemented and self-consistent —
 no more seams or stubs in the replay core.
 
-## Phase 6 — Filesystem materialization + working-tree scanning — IN PROGRESS
+## Phase 6 — Filesystem materialization + working-tree scanning — DONE, verified
 
 First phase touching real I/O and the first real Effect service in this
 codebase (Phases 0-5 were pure/synchronous). Split into two parallel
-jobs:
-- 6a `fs/tree-scan.ts` (working-tree scan, `.snap` exclusion,
-  unsupported-entry detection, builds a `Tree`) — **dispatched, in flight**.
-- 6b `fs/materialize.ts` (install a `Tree` onto disk) +
-  `fs/atomic-write.ts` (same-directory temp-then-rename for
-  `repository.json`, §10) — **dispatched, in flight** (parallel with 6a).
+jobs, both landed and read in full:
+- 6a `fs/tree-scan.ts` (9afbab9): walks the tree excluding `.snap`,
+  detects symlinks via `readLink` (never `stat`, which would follow
+  them) plus any other non-regular entry, builds a `Tree`. Continues
+  past unsupported entries rather than stopping at the first one.
+  `isCleanAgainstCurrentTree` per §2's exact definition. 10 tests.
+- 6b `fs/materialize.ts` + `fs/atomic-write.ts` (937e4e6): installs a
+  target `Tree` onto disk by diffing against real disk state (never a
+  caller-supplied previous tree — stays correct after an external
+  change); handles both blocking directions (file blocks directory,
+  and the reverse); prunes emptied directories deepest-first.
+  `atomicWriteFile`: same-directory temp-then-rename so
+  `repository.json` is never observed half-written, per §10. 10 tests.
+  Two real-disk-I/O bugs the agent caught and fixed itself: Node's
+  `fs.rm` needs `recursive: true` even for an empty directory, and the
+  obsolete-file removal pass had to exclude paths just legitimately
+  rebuilt as directories earlier in the same call.
+
+Both use `@effect/platform`'s `FileSystem` service (`Context.Tag`),
+confirmed against the real API before coding, swappable for tests.
+Test convention established: `it.layer(NodeFileSystem.layer)` +
+`it.scoped` + the service's own `makeTempDirectoryScoped()` for
+disposable temp dirs — no `node:fs/promises` needed. 368/368 tests,
+typecheck clean.
 
 ## Phases 7-12 — NOT STARTED
 7. Configuration service (`config/*`)
