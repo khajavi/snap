@@ -1,5 +1,8 @@
 # Snap
 
+> This project is the capstone project of the [Ziverge Vibe Coding 2.0](https://www.eventbrite.com/e/ziverge-vibe-coding-20-tickets-1994870490337)
+> workshop.
+
 Snap is a small local version control system built around vector-clock
 versions, patch replay, and deterministic automatic merging. It is deliberately
 compact: eight everyday commands plus a read-only HTTP mode, with most of the
