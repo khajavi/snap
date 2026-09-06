@@ -1,0 +1,112 @@
+# CI for the Snap repository (khajavi/snap).
+#
+# Four layers, mirroring AGENTS.md's verification contract and progress.md's
+# "running verification totals":
+#
+#   1. typecheck  — ts: tsc --noEmit (the project's `build` alias)
+#   2. unit       — ts: vitest run (431 tests, including the property-based
+#                   convergence suite)
+#   3. harness    — test-harness self-check: its own tsc + vitest suite
+#   4. acceptance — ./verify --lang ts: the 28-scenario language-neutral
+#                   YAML suite (the authoritative gate per AGENTS.md)
+#
+# Layers 1-3 run in parallel; acceptance needs nothing from them (the verify
+# script does its own npm ci + bundling), so it also runs unconditionally —
+# splitting them keeps a unit failure from masking an acceptance-only
+# regression (or vice versa) in the GitHub checks list.
+
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      - name: Install dependencies
+        working-directory: ts
+        run: npm ci
+      - name: Typecheck
+        working-directory: ts
+        run: npm run typecheck
+
+  unit:
+    name: TypeScript unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      - name: Install dependencies
+        working-directory: ts
+        run: npm ci
+      - name: Run unit tests
+        working-directory: ts
+        run: npm test
+
+  harness:
+    name: Test-harness self-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: test-harness/package-lock.json
+      - name: Install dependencies
+        working-directory: test-harness
+        run: npm ci
+      - name: Typecheck
+        working-directory: test-harness
+        run: npm run check
+      - name: Self tests
+        working-directory: test-harness
+        run: npm test
+
+  acceptance:
+    name: Acceptance suite (./verify --lang ts)
+    runs-on: ubuntu-latest
+    # The full suite takes ~60s locally; three minutes covers slower runners.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the acceptance suite
+        run: ./verify --lang ts
+        env:
+          # CI streams are never TTYs, so presentation is plain by default;
+          # keep the suite's environment deterministic regardless.
+          NO_COLOR: "1"
+      - name: Upload failed-run artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-failure-logs
+          path: |
+            /tmp/snap-*
+            /tmp/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
