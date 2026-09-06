@@ -53,3 +53,35 @@ steps:
           value: 0
         - type: stdout_equals
           value: "Binary files a/data.bin and /dev/null differ\n"
+
+  # Open Spec Issue 3 regression (SPEC.md §7.6): a path whose text/binary
+  # classification differs across the two diffed sides is a binary change
+  # (§7.5's authoring rule applied to the two sides) and prints the binary
+  # one-liner, never a token diff -- in both the working-tree arity and
+  # the version-pair arity, and in both directions (text->binary and
+  # binary->text).
+  - write_file: {path: repo/to-binary.txt, text: "words\n"}
+  - write_file: {path: repo/to-text.bin, base64: AP8A}
+  - run: {cwd: repo, args: [commit, flip-base], expect: [{type: exit_code, value: 0}]}
+  - write_file: {path: repo/to-binary.txt, base64: AP8A}
+  - write_file: {path: repo/to-text.bin, text: "words\n"}
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "Binary files a/to-binary.txt and b/to-binary.txt differ\nBinary files a/to-text.bin and b/to-text.bin differ\n"
+        - {type: stderr_equals, value: ""}
+  # Commit the flipped contents as v3. flip-base (v2) also swept in the
+  # uncommitted data.bin removal from above, so v2->v3 is the pure
+  # text<->binary flip boundary to exercise in the version-pair arity.
+  - run: {cwd: repo, args: [commit, flip], expect: [{type: exit_code, value: 0}]}
+  - run:
+      cwd: repo
+      args: [diff, "(binary@example.com->2)", "(binary@example.com->3)"]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "Binary files a/to-binary.txt and b/to-binary.txt differ\nBinary files a/to-text.bin and b/to-text.bin differ\n"
+        - {type: stderr_equals, value: ""}

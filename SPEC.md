@@ -555,6 +555,16 @@ Binary files a/<path> and b/<path> differ
 Again substitute `/dev/null` for an absent side. No differences means no
 stdout and success.
 
+A path is rendered as a text block or as the binary one-liner by §7.5's
+authoring rule, applied to the two diffed sides: the path is a **text**
+path when the new side's content is text and the old side is absent or
+text (symmetrically, when the old side is text and the new side is
+absent). A path whose classification differs across the two sides — a
+`put` that replaced text with binary content or binary with text — is a
+**binary change** and prints the one-liner, never a token diff: bytes
+that were never tokenized as text on one side cannot anchor a token
+comparison on the other.
+
 ### 7.7 `snap revert <version>`
 
 - Requires contributor configuration, a clean working tree, and a locally
