@@ -255,16 +255,115 @@ through to global) — a reasoned judgment call, documented. Required-ID
 error text found pinned at `tests/19-version-boundaries.yaml:87`. 26
 tests (394 total), typecheck clean.
 
-## Phases 8-12 — NOT STARTED
-8. CLI grammar, dispatch, and commands (`cli/*`, `commands/*`)
-9. Presentation layer (`presentation/*`) — also resolves Open Spec Issue 6
-   (§7.11 literal-prefix diff coloring) via a SPEC wording addition + new
-   `tests/28-terminal-presentation.yaml` case, per plan.md.
-10. HTTP serve + HTTP repository loading (`http/*`, `repo-store/http-source.ts`)
-11. Cross-cutting hardening + full-suite convergence — also resolves Open
-    Spec Issue 3 (§7.6 text/binary diff classification) via a SPEC wording
-    addition + new `tests/06-binary-and-empty.yaml` case.
-12. Property-based convergence tests + polish (editorial Open Spec Issues 1, 5)
+## Phase 8 — CLI grammar, dispatch, and commands — DONE, verified (commit 88a7052)
+
+- `cli/args.ts` (per-command grammar), `cli/dispatch.ts` (argv → command →
+  exit-code mapping), and all ten commands under `commands/`.
+- **Error-contract work (the bulk of this phase, done by me directly)**:
+  the suite pins exact single-line stderr details (tests/15, 23, 26, 27),
+  but Effect's `TreeFormatter` leaks multi-line dumps through
+  `SchemaValidationError`. Fixed in `domain/patch.ts`: a pre-decode JSON
+  lint (`lintRepositoryJson`/`lintChange`) owns the exactly-pinned
+  diagnostics (unknown fields at every level, one-key edit ops, empty
+  insert, `changes is empty`), then everything else renders through
+  Effect's `ArrayFormatter` flattened to one line. Union-member ordering
+  can no longer decide which pinned message wins.
+- **Validation point 5 completed** in `replay/validate.ts` (was the
+  honestly-partial empty-base-only case from Phase 3): every change is
+  now checked against its true materialized exact base via the Phase 4/5
+  replay machinery — creations require absent base paths, edits/deletes
+  require present ones, edit scripts consume exactly the old tokens, and
+  the authored token sequence is canonical (test 27's `bad token` case).
+- `ChangeBaseConflictError` rendering: raise sites compose the complete
+  diagnostic (path before or after the phrase, per each pin) and the
+  renderer prints the reason bare — test 23 end-anchors
+  `delete of absent path: f` while test 15 uses `stderr_contains`.
+- Verified myself: typecheck clean; 408/408 unit tests; end-to-end probe
+  of every pinned validation scenario byte-exact.
+
+## Phase 9 — Presentation layer — DONE, verified (commit ae25b90, with 10)
+
+- **Open Spec Issue 6 first** (per plan.md): SPEC §7.11's line-coloring
+  rule corrected — the styles wrap diff *output* lines structurally (by
+  the emitting code path), not by literal text-prefix matching, so a
+  deleted line whose content starts with `--` can no longer be
+  misclassified as a header; regression case (dash/plus-heavy content)
+  added to `tests/28-terminal-presentation.yaml` BEFORE implementing.
+- `presentation/mode.ts` (§11 `SNAP_COLOR`/`NO_COLOR` resolution per
+  stream, TTY auto-selection), `presentation/ansi.ts`, `presentation/render.ts`
+  (pure plain→terminal transforms per output family), `presentation/index.ts`.
+- `dispatch.ts` tags each command's output with its family; `main.ts`
+  resolves modes and renders errors in terminal style. §7.11's
+  "presenting MUST NOT change command execution" holds: renderers never
+  re-derive content. Invalid `SNAP_COLOR` fails before any command
+  execution (test 28 pins this ordering).
+- §11's unit tests for mode resolution + renderers added; fixed three
+  LF-handling bugs the tests exposed. 430/430 unit tests.
+
+## Phase 10 — HTTP serve + HTTP repository source — DONE, verified (commit ae25b90, with 9)
+
+- `http/serve.ts` (§9 `--serve`): boots, validates, encodes the
+  repository snapshot **once**, then serves one fixed resource —
+  byte-exact target match including any query string (test 12's
+  `?query=not-exact` → 404; §9's "one fixed resource" is literal).
+  SIGINT/SIGTERM close the server and exit 0 (§7.9), overriding the
+  default 130/143.
+- `repo-store/http-source.ts` (§9 client side): exactly one GET of the
+  given URL, status-200-only (anything else → `HTTP <status>`, pinning
+  test 13's `HTTP 302` for the redirect case), body validated as a full
+  repository before any local mutation.
+- `loadRepositoryAt` gained the `http(s)://` branch; `diff --repo` and
+  `merge` accept HTTP operands. Tests 12, 13, and 26's serve steps all
+  green — **28/28 acceptance suite passing** at end of this phase.
+
+## Phase 11 — Hardening: Open Spec Issue 3 — DONE, verified (commit e2b7270)
+
+- SPEC §7.6 now states the classification rule for cross-version diffs
+  where a path's text/binary classification differs between the two
+  sides: it is a binary change and prints the binary one-liner, never a
+  token diff (§7.5's authoring rule adopted for rendering), in both
+  arities and both directions.
+- Regression case added to `tests/06-binary-and-empty.yaml`: text→binary
+  and binary→text at one path, working-tree arity and version-pair
+  arity. Two authoring mistakes of mine caught and fixed by probing the
+  real CLI: the flip commit must actually exist before the version-pair
+  diff (v3, since v2 swept in an earlier uncommitted removal), and diff
+  operands sort by UTF-8 bytes (`to-binary.txt` before `to-text.bin`).
+- Verified myself: probes confirmed the implementation already matched
+  the new rule in both directions; suite 28/28 after the case landed.
+
+## Phase 12 — Property-based convergence + editorial sweep — DONE, verified (commit 8c72f87)
+
+- `test/replay/convergence.prop.test.ts`: `@effect/vitest`'s `it.prop`
+  + fast-check generates random event specs and expands them into valid
+  causal patch graphs — per-author knowledge as latest revisions,
+  optional `sync` (import-everything) events creating multi-level
+  histories, each change computed against the **true replayed base
+  tree** — then asserts replay converges to identical trees AND warning
+  sequences under deterministic patch-array permutations (rotate/reverse),
+  across every emitted patch's base-closed version plus the joined
+  frontier. Generator validity is itself asserted: every generated
+  repository must pass the full six-point `validateRepository`.
+- Generator soundness lessons (each surfaced as a shrunk counterexample
+  the property caught): changes must be sorted by path (§4.2), targets
+  must be causally closed (a lone concurrent head is not materializable),
+  and a target's own dot overwrites its base entry (monotone knowledge).
+- Mutation probes: breaking the ready-set comparator's second/third keys
+  does NOT fail the property — correct, since replay is genuinely
+  order-symmetric (the CRDT guarantee itself); the property's sensitivity
+  was confirmed by its catching three real generator bugs during
+  development.
+- Editorial sweep: **Issue 1** — SPEC §2's prefix-freedom cross-reference
+  now points at §6.2's namespace precheck (the mechanism that actually
+  enforces it), not §6.4. **Issue 5** — documented at
+  `compareReadyCandidates` that §6.1's keys 2–3 are vestigial (§3.5's
+  serial-contributor rule makes key 2 always decide key-1 ties) and kept
+  only as a defensive total order the implementation does not rely on.
+  **Issue 4** confirmed harmless: `integrate.ts` filters `C==T` (case 2)
+  before §6.4 is ever consulted, so `tiebreakPath`'s rule 1 is defensive
+  documentation, exactly as research.md predicted.
+- Verified myself: typecheck clean; 431/431 unit; 28/28 acceptance;
+  harness self-check (`npm run check` + `npm test`) clean.
 
 ---
 
@@ -280,3 +379,17 @@ tests (394 total), typecheck clean.
 | 5 (a+b) | clean | 348/348 |
 | 6 (a+b) | clean | 368/368 |
 | 7 | clean | 394/394 |
+| 8 | clean | 408/408 |
+| 9 | clean | 430/430 |
+| 10 | clean | 430/430 |
+| 11 | clean | 430/430 |
+| 12 | clean | 431/431 |
+
+**Final state**: all 13 phases (0–12) done. `./verify --lang ts` → **28/28
+acceptance scenarios passing** (including the regression cases added for
+Open Spec Issues 2, 3, and 6); typecheck clean; 431/431 unit tests;
+test-harness self-check clean. All six Open Spec Issues from research.md
+resolved or dispositioned: 2 (Phase 4, SPEC §6.2 wide-`S` reading +
+regression), 3 (Phase 11, SPEC §7.6 + regression), 6 (Phase 9, SPEC §7.11
++ regression), 1 (Phase 12, cross-reference corrected), 4 and 5 (Phase 12,
+confirmed vestigial/defensive, documented at the implementation sites).
