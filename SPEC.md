@@ -72,7 +72,7 @@ bytes.
 
 Every tracked tree is **prefix-free by path segment**: if `a` is a file, no
 `a/...` path is present. This is validated for every patch's authored result
-and enforced during concurrent replay by §6.4.
+and enforced during concurrent replay by §6.2's namespace precheck.
 
 The **current tree** is the materialization of the repository's current
 frontier. The working tree is **clean** when its path/byte map exactly equals

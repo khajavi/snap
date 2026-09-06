@@ -169,6 +169,15 @@ function isBaseIntegrated(patch: Patch, integrated: ReadonlySet<DotKey>): boolea
  * order of author (§3.2), then (3) numeric revision. Over distinct dots
  * the three keys are a total order, so the least ready patch is unique
  * and the sequence deterministic regardless of the input array's order.
+ *
+ * Keys 2 and 3 are vestigial for valid histories (research.md Open Spec
+ * Issue 5): §3.5's serial-contributor rule means two distinct ready
+ * patches tying on key 1 always have different authors, so key 2 decides
+ * and key 3 never fires. They are kept as a defensive total order — the
+ * implementation never RELIES on them (convergence does not depend on
+ * which ready patch integrates first, which ts/test/replay/
+ * convergence.prop.test.ts probes broadly) — but dropping them would
+ * make the comparator partial, so they stay.
  */
 function compareReadyCandidates(a: SequencingCandidate, b: SequencingCandidate): -1 | 0 | 1 {
   const resultOrder = compareSnapOrder(a.result, b.result);
