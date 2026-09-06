@@ -40,6 +40,7 @@
  */
 
 import { Either, ParseResult, Schema } from "effect";
+import { ArrayFormatter } from "effect/ParseResult";
 import { SchemaValidationError } from "../errors/domain-errors.js";
 import {
   compareContributorIds,
@@ -48,7 +49,6 @@ import {
 } from "./contributor.js";
 import { checkPrefixFree, compareTrackedPaths, parseTrackedPath, type TrackedPath } from "./path.js";
 import { MAX_REVISION, type Revision } from "./version.js";
-
 // ---------------------------------------------------------------------------
 // Shared scalar schemas
 // ---------------------------------------------------------------------------
@@ -73,7 +73,9 @@ export const TrackedPathSchema: Schema.Schema<TrackedPath, string> = Schema.Stri
     {
       message: (issue) => {
         const result = parseTrackedPath(issue.actual as string);
-        return Either.isLeft(result) ? `invalid path: ${result.left.reason}` : "invalid path";
+        // `path is invalid` is the suite's pinned phrasing
+        // (tests/15-repository-validation.yaml, the `.snap/secret` path case).
+        return Either.isLeft(result) ? `path is invalid: ${result.left.reason}` : "path is invalid";
       },
     },
   ),
@@ -81,13 +83,17 @@ export const TrackedPathSchema: Schema.Schema<TrackedPath, string> = Schema.Stri
 
 /**
  * SPEC §3.1's revision grammar: "a positive integer no greater than
- * JavaScript's maximum safe integer." `Schema.Int` (not a bare
- * `Schema.Number`) rejects `2.5`; the `between` refinement rejects `0`,
- * negatives, and anything past `MAX_REVISION` (plan.md §3's Schema
- * bullet).
+ * JavaScript's maximum safe integer." Declared as `Schema.Number` plus one
+ * filter (rather than `Schema.Int` + `between`) so the diagnostic is fully
+ * owned here: `Schema.Int`'s built-in failure message is not overridable,
+ * and `tests/23-strict-validation-matrix.yaml` pins the `.+positive safe
+ * integer` shape for both a fractional and an out-of-range revision.
  */
-export const RevisionSchema: Schema.Schema<Revision, number> = Schema.Int.pipe(
-  Schema.between(1, MAX_REVISION, { message: () => `revision must be between 1 and ${MAX_REVISION}` }),
+export const RevisionSchema: Schema.Schema<Revision, number> = Schema.Number.pipe(
+  Schema.filter(
+    (n: number): n is Revision => Number.isSafeInteger(n) && n >= 1,
+    { message: () => "revision must be a positive safe integer" },
+  ),
 );
 
 // ---------------------------------------------------------------------------
@@ -124,7 +130,9 @@ function isSortedUniqueVersionPairs(pairs: ReadonlyArray<VersionPair>): boolean 
 export const VersionPairsSchema: Schema.Schema<VersionPairs, ReadonlyArray<readonly [string, number]>> =
   Schema.Array(VersionPairSchema).pipe(
     Schema.filter(isSortedUniqueVersionPairs, {
-      message: () => "version pairs must be sorted by contributor id with no duplicate author",
+      // `canonical` is the suite's pinned substring for this failure
+      // (tests/23-strict-validation-matrix.yaml's `.*canonical.*` pattern).
+      message: () => "version pairs are not canonical (must be sorted by contributor id with no duplicate author)",
     }),
   );
 
@@ -180,10 +188,20 @@ function isValidMessage(message: string): boolean {
   return true;
 }
 
+/**
+ * The message filter's diagnostic. `tests/23-strict-validation-matrix.yaml`
+ * pins the empty case's exact text (`snap: .+message is empty`); the
+ * control-character case has no pinned text, only the one-line format, so
+ * it gets an equally plain phrase.
+ */
+function messageFilterDiagnostic(message: string): string {
+  return message.length === 0
+    ? "patch message is empty"
+    : "message contains a forbidden ASCII control character";
+}
+
 export const MessageSchema: Schema.Schema<string, string> = Schema.String.pipe(
-  Schema.filter(isValidMessage, {
-    message: () => 'message must be nonempty and contain no ASCII control character other than tab or LF',
-  }),
+  Schema.filter(isValidMessage, { message: (issue) => messageFilterDiagnostic(issue.actual as string) }),
 );
 
 // ---------------------------------------------------------------------------
@@ -195,13 +213,23 @@ const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/
 
 export const Base64ContentSchema: Schema.Schema<string, string> = Schema.String.pipe(
   Schema.filter((s) => BASE64_PATTERN.test(s), {
-    message: () => "content must be standard padded RFC 4648 base64",
+    // `canonical base64` is the suite's pinned substring
+    // (tests/15-repository-validation.yaml, the unpadded "abc" case).
+    message: () => "content must be canonical base64",
   }),
 );
 
-/** SPEC §4.4: "Counts are positive safe integers." Reuses `RevisionSchema`'s bound for "safe integer". */
-const PositiveSafeIntegerSchema: Schema.Schema<number, number> = Schema.Int.pipe(
-  Schema.between(1, MAX_REVISION, { message: () => `count must be between 1 and ${MAX_REVISION}` }),
+/**
+ * SPEC §4.4: "Counts are positive safe integers." Same shape as
+ * `RevisionSchema` (a `Schema.Number` filter, for full message ownership);
+ * the diagnostic names the failing count plainly —
+ * `tests/23-strict-validation-matrix.yaml` pins the `.+positive safe integer`
+ * substring for a `{"retain": 0}` op.
+ */
+const PositiveSafeIntegerSchema: Schema.Schema<number, number> = Schema.Number.pipe(
+  Schema.filter((n: number) => Number.isSafeInteger(n) && n >= 1, {
+    message: () => "count must be a positive safe integer",
+  }),
 );
 
 /** SPEC §4.4: `insert` operations "insert one or more nonempty text tokens." */
@@ -211,7 +239,18 @@ const NonEmptyTextTokenSchema: Schema.Schema<string, string> = Schema.String.pip
 
 const RetainOpSchema = Schema.Struct({ retain: PositiveSafeIntegerSchema });
 const DeleteOpSchema = Schema.Struct({ delete: PositiveSafeIntegerSchema });
-const InsertOpSchema = Schema.Struct({ insert: Schema.NonEmptyArray(NonEmptyTextTokenSchema) });
+
+/**
+ * `insert`'s array is declared as a plain array plus an emptiness filter
+ * (rather than `Schema.NonEmptyArray`) so the diagnostic is the pinned
+ * `insert is empty` (`tests/23-strict-validation-matrix.yaml`) instead of
+ * the generic non-empty-array failure text.
+ */
+const InsertOpSchema = Schema.Struct({
+  insert: Schema.Array(NonEmptyTextTokenSchema).pipe(
+    Schema.filter((tokens) => tokens.length > 0, { message: () => "insert is empty" }),
+  ),
+});
 
 /**
  * SPEC §4.4's edit-script operation shapes. Deliberately shaped to match
@@ -253,7 +292,9 @@ function hasNoAdjacentSameKindOps(ops: ReadonlyArray<PatchEditOp>): boolean {
  */
 export const EditScriptSchema = Schema.Array(EditOpSchema).pipe(
   Schema.filter(hasNoAdjacentSameKindOps, {
-    message: () => "adjacent edit-script operations must not share the same kind",
+    // `adjacent insert` is the suite's pinned substring for this failure
+    // (tests/15-repository-validation.yaml's two consecutive inserts case).
+    message: () => "edit script has adjacent insert operations (same-kind operations must be coalesced)",
   }),
 );
 
@@ -320,12 +361,21 @@ function isPrefixFreeChanges(changes: ReadonlyArray<Change>): boolean {
  * SPEC §4.2: "`changes` is nonempty, sorted by path, and contains at most
  * one change per path."
  */
-export const ChangesSchema = Schema.NonEmptyArray(ChangeSchema).pipe(
+/**
+ * `changes` is declared as a plain array plus an emptiness filter (rather
+ * than `Schema.NonEmptyArray`) so the diagnostic is the pinned `changes is
+ * empty` (`tests/23-strict-validation-matrix.yaml`); the two order filters
+ * below carry the same plain wording style — the prefix-freedom diagnostic
+ * is pinned by `tests/15-repository-validation.yaml`'s `tree paths conflict`
+ * substring.
+ */
+export const ChangesSchema = Schema.Array(ChangeSchema).pipe(
+  Schema.filter((changes) => changes.length > 0, { message: () => "patch changes is empty" }),
   Schema.filter(isSortedUniqueChanges, {
     message: () => "changes must be sorted by path with at most one change per path",
   }),
   Schema.filter(isPrefixFreeChanges, {
-    message: () => "changes' tree paths conflict (one path is a segment-prefix of another)",
+    message: () => "changes' tree paths conflict",
   }),
 );
 
@@ -370,28 +420,168 @@ export function expectedRevisionFor(patch: Patch): Revision {
 }
 
 // ---------------------------------------------------------------------------
-// Decoding
+// Decoding: pre-decode JSON lint + Schema (SPEC.md §4.5 point 1)
 // ---------------------------------------------------------------------------
 
-/**
- * Formats a Schema `ParseError` as a single human-readable string via
- * `ParseResult.TreeFormatter`, the text `SchemaValidationError` carries.
- * Shared by `domain/repository.ts` so a repository-level decode failure
- * (which may originate from deep inside one element of `patches`) is
- * rendered the same way as a standalone patch decode failure.
+/** The JSON object keys every shape in the repository format may declare,
+ * by nesting level. A key outside these sets is SPEC §4.1's "unknown
+ * field"; a key from another level is a misplaced field. Linting these
+ * from the raw parsed JSON (rather than from Schema's issue tree) keeps
+ * the diagnostics deterministic under union member ordering: Schema's
+ * first-reported failure for a union member mismatch depends on member
+ * order, but the suite pins exact texts (`tests/23-strict-validation-
+ * matrix.yaml`'s `repository has unknown field: unknown`,
+ * `.+unknown field: extra`, `.+must have one operation`), so the key
+ * checks must run before Schema and take priority over its messages.
  */
-export function formatParseError(error: ParseResult.ParseError): string {
-  return ParseResult.TreeFormatter.formatErrorSync(error);
+const REPOSITORY_KEYS = new Set(["format", "frontier", "patches"]);
+const PATCH_KEYS = new Set(["author", "revision", "base", "message", "changes"]);
+const CHANGE_KEYS = new Set(["type", "path"]);
+const CHANGE_VARIANT_KEYS = new Set(["edit", "content"]);
+const EDIT_OP_KEYS = new Set(["retain", "delete", "insert"]);
+
+/** The value as a JSON object record, or `undefined` when it is not one. */
+function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+/** The value as a JSON array, or `undefined` when it is not one. */
+function asArray(value: unknown): ReadonlyArray<unknown> | undefined {
+  return Array.isArray(value) ? (value as ReadonlyArray<unknown>) : undefined;
+}
+/**
+ * Keys that identify a change variant. `type` and `path` are shared by all
+ * three variants; the third key picks the variant (`edit` for text,
+ * `content` for put) and its absence leaves a `delete`.
+ */
+function lintChange(change: unknown, lint: (detail: string) => void): void {
+  const record = asRecord(change);
+  if (record === undefined) {
+    return; // Schema reports the type mismatch.
+  }
+  for (const key of Object.keys(record)) {
+    if (!CHANGE_KEYS.has(key) && !CHANGE_VARIANT_KEYS.has(key)) {
+      lint(`repository has unknown field: ${key}`);
+      return;
+    }
+  }
+  const variantKeys = Object.keys(record).filter((key) => CHANGE_VARIANT_KEYS.has(key));
+  if (variantKeys.length > 1) {
+    lint(`change has more than one value field: ${variantKeys.join(", ")}`);
+    return;
+  }
+  const edit = asArray(record["edit"]);
+  if (edit !== undefined) {
+    for (const op of edit) {
+      const opRecord = asRecord(op);
+      if (opRecord === undefined) {
+        continue; // Schema reports the type mismatch.
+      }
+      const keys = Object.keys(opRecord);
+      if (keys.length !== 1 || !keys.every((key) => EDIT_OP_KEYS.has(key))) {
+        lint("edit operation must have one operation");
+        return;
+      }
+      // Inside `EditOpSchema`'s union, the per-member emptiness filter's
+      // message is swallowed by the union's aggregate diagnostic, so the
+      // pinned `insert is empty` text is produced here instead.
+      if (keys[0] === "insert" && asArray(opRecord["insert"])?.length === 0) {
+        lint("edit operation insert is empty");
+        return;
+      }
+    }
+  }
 }
 
 /**
- * Decodes one patch value from unknown JSON input, applying SPEC §4.5
- * point 1's schema layer: unknown top-level or nested fields, non-integer
- * numbers, and invalid typed values are all surfaced as one
- * `SchemaValidationError`.
+ * Checks the pinned key-structure rules of the repository format against
+ * raw (uniquely-keyed, already-parsed) JSON, reporting the first violation
+ * through `lint`. Everything it does NOT report — value types, literal
+ * values, path/ID/message grammar, ordering, contiguity — is Schema's or
+ * the causal pipeline's job; this pass exists only so key-structure
+ * diagnostics keep their pinned exact texts.
+ */
+export function lintRepositoryJson(input: unknown, lint: (detail: string) => void): void {
+  const record = asRecord(input);
+  if (record === undefined) {
+    return; // Schema reports the type mismatch.
+  }
+  for (const key of Object.keys(record)) {
+    if (!REPOSITORY_KEYS.has(key)) {
+      lint(`repository has unknown field: ${key}`);
+      return;
+    }
+  }
+  const patches = asArray(record["patches"]);
+  if (patches === undefined) {
+    return; // Schema reports the type mismatch.
+  }
+  for (const patch of patches) {
+    const patchRecord = asRecord(patch);
+    if (patchRecord === undefined) {
+      continue;
+    }
+    for (const key of Object.keys(patchRecord)) {
+      if (!PATCH_KEYS.has(key)) {
+        lint(`repository has unknown field: ${key}`);
+        return;
+      }
+    }
+    const changes = asArray(patchRecord["changes"]);
+    if (changes === undefined) {
+      continue;
+    }
+    for (const change of changes) {
+      lintChange(change, lint);
+    }
+  }
+}
+
+/**
+ * Renders a Schema `ParseError` as ONE LINE (SPEC.md §10's error format is
+ * `snap: <detail>` — the TreeFormatter's multi-line tree would print a
+ * schema-shaped blob as the whole stderr blob). Shared by
+ * `domain/repository.ts`; called only for inputs that already passed
+ * `lintRepositoryJson`, so the key-structure cases it would misname under
+ * union member ordering cannot reach it.
+ *
+ * The first formatter failure's message wins; every message-producing
+ * Schema filter in this module is styled to a plain phrase the tests pin
+ * (`message is empty`, `positive safe integer`, `insert is empty`,
+ * `changes is empty`, `tree paths conflict`, `canonical base64`, `path is
+ * invalid: ...`, `invalid contributor id: ...`, `adjacent edit-script
+ * operations...`). Non-message failures (Effect's default "Expected ...")
+ * still render one-line — no suite assertion names them more precisely
+ * than `snap: .+` (test 27).
+ */
+export function formatParseError(error: ParseResult.ParseError): string {
+  const failures = ArrayFormatter.formatErrorSync(error);
+  const first = failures[0];
+  if (first === undefined) {
+    return "invalid value";
+  }
+  const message =
+    first.message !== ""
+      ? first.message
+      : `invalid value at ${first.path.map(String).join(".") || "<root>"}`;
+  return message.replace(/\s*\n\s*/g, " ").trim();
+}
+
+const schemaFailure = (error: ParseResult.ParseError): SchemaValidationError =>
+  new SchemaValidationError({ message: formatParseError(error) });
+
+/**
+ * Decodes one linted patch value, applying SPEC §4.5 point 1's schema
+ * layer: unknown fields (already excluded by the lint), non-integer
+ * numbers, and invalid typed values surface as one `SchemaValidationError`.
+ * Callers pass raw parsed JSON through `lintRepositoryJson` first — the
+ * lint reports unknown/misplaced key structures, so this function's error
+ * messages stay deterministic.
  */
 export function decodePatch(input: unknown): Either.Either<Patch, SchemaValidationError> {
   return Schema.decodeUnknownEither(PatchSchema, { onExcessProperty: "error" })(input).pipe(
-    Either.mapLeft((error) => new SchemaValidationError({ message: formatParseError(error) })),
+    Either.mapLeft(schemaFailure),
   );
 }

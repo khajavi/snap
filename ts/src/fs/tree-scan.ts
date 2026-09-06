@@ -26,7 +26,7 @@
  * call because there is no link left to follow.
  */
 
-import { Effect, Either } from "effect";
+import { Data, Effect, Either } from "effect";
 import type { PlatformError } from "@effect/platform/Error";
 import { FileSystem } from "@effect/platform/FileSystem";
 import type { File } from "@effect/platform/FileSystem";
@@ -65,6 +65,21 @@ export interface WorkingTreeScan {
   /** Every symlink or other non-regular entry found; the scan does not stop at the first one. */
   readonly unsupported: ReadonlyArray<UnsupportedEntry>;
 }
+
+/**
+ * SPEC.md §10: "Any command that scans the working tree fails on a symlink
+ * or other unsupported entry rather than following or silently ignoring
+ * it." Raised by a command (`status` now; `commit`/`diff` in a later
+ * sub-job) after a scan returns a nonempty `unsupported` list — the scan
+ * itself always completes, so every unsupported entry is known when the
+ * failure is raised. `path` is the entry's repository-relative path (the
+ * scan's own shape), matching the pinned plain-mode line's
+ * `unsupported working tree entry: <path>` text (tests/08 pins the exact
+ * line; the `snap: ` prefix is added at the CLI-error-rendering boundary).
+ */
+export class UnsupportedWorkingTreeEntryError extends Data.TaggedError("UnsupportedWorkingTreeEntryError")<{
+  readonly path: string;
+}> {}
 
 /** Joins a tracked-path-shaped relative path with one more segment, `/`-separated. */
 const joinRelative = (parent: string, name: string): string =>

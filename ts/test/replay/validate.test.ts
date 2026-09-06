@@ -473,11 +473,11 @@ describe("validateRepository point 5 (PARTIAL): trivial empty-base case only", (
     expect(Either.isRight(checkChangesAgainstMaterializedBase(repository))).toBe(true);
   });
 
-  it("does NOT reject the nonempty-base cases that genuinely need Phase 4's replay (documented limitation)", () => {
+  it("rejects a nonempty-base edit that does not consume its old content (Phase 4+ machinery now wired in)", () => {
     // tests/15-repository-validation.yaml's "does not consume old content"
-    // case: this function alone must NOT catch it (base is nonempty, so
-    // it's skipped per the TODO(Phase 4) -- full validateRepository still
-    // succeeds here, since points 1-4 and 6 all pass for this repository).
+    // case: patch a@x->2 edits `f` (created by a@x->1 with two tokens) with
+    // a single `{"retain": 1}` -- it stops short of the complete old token
+    // sequence (§4.4), so point 5 must reject it via the base-version replay.
     const underconsume = {
       format: 1,
       frontier: [["a@x", 2]],
@@ -499,10 +499,12 @@ describe("validateRepository point 5 (PARTIAL): trivial empty-base case only", (
       ],
     };
     const result = validateRepository(underconsume);
-    // This documents the phase boundary: the malformed edit script is NOT
-    // rejected by this phase's implementation because doing so soundly
-    // requires materializing a nonempty base (Phase 4).
-    expect(Either.isRight(result)).toBe(true);
+    // The base-version replay machinery (Phases 4-5) is wired in, so the
+    // malformed edit script IS rejected -- the old phase boundary is gone.
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) {
+      expect(result.left._tag).toBe("ChangeBaseConflictError");
+    }
   });
 });
 

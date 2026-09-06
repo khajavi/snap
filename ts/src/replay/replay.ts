@@ -62,8 +62,15 @@ export interface ReplayOutcome {
  * sorted with no duplicate author and carry valid revisions, so the parse
  * cannot fail; the impossible branch throws as an internal invariant
  * violation, the contract `domain/diff.ts`'s `applyEditScript` uses.
+ *
+ * Exported (not module-private) because the command modules face the same
+ * conversion from the outside: `status` turns the repository frontier into
+ * the `Version` it replays and prints, and `log` turns each patch's
+ * `computePatchResult` output into its result-version line — Phase 8's
+ * `commands/status-cmd.ts`/`commands/log-cmd.ts` reuse this rather than
+ * growing third and fourth twins of the same trick.
  */
-const versionOfPairs = (pairs: VersionPairs): Version => {
+export const versionOfPairs = (pairs: VersionPairs): Version => {
   const canonical = `(${pairs.map(([id, revision]) => `${id}->${revision}`).join(",")})`;
   const parsed = Version.parse(canonical);
   if (Either.isLeft(parsed)) {

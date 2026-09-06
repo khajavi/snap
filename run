@@ -69,8 +69,12 @@ fi
 root="$(implementation_dir "$lang")"
 case "$lang" in
   ts)
+    dist="$root/dist/main.mjs"
     if [ ! -d "$root/node_modules" ]; then (cd "$root" && npm ci --silent); fi
-    exec node "$root/node_modules/tsx/dist/cli.mjs" "$root/src/main.ts" "${passthrough[@]+"${passthrough[@]}"}"
+    if [ ! -f "$dist" ] || [ -n "$(find "$root/src" -type f -newer "$dist" -print -quit 2>/dev/null)" ] || [ "$root/package.json" -nt "$dist" ]; then
+      (cd "$root" && npm run bundle --silent)
+    fi
+    exec node "$dist" "${passthrough[@]+"${passthrough[@]}"}"
     ;;
   rust)
     binary="$root/target/debug/snap"

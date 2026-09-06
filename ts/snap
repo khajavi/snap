@@ -2,4 +2,10 @@
 set -eu
 
 root="$(cd "$(dirname "$0")" && pwd)"
-exec node "$root/node_modules/tsx/dist/cli.mjs" "$root/src/main.ts" "$@"
+dist="$root/dist/main.mjs"
+
+if [ ! -f "$dist" ] || [ -n "$(find "$root/src" -type f -newer "$dist" -print -quit 2>/dev/null)" ] || [ "$root/package.json" -nt "$dist" ]; then
+  (cd "$root" && npm run bundle --silent)
+fi
+
+exec node "$dist" "$@"

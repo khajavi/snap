@@ -188,13 +188,29 @@ export function materialize(
     const removedPaths: string[] = [];
     for (const relPath of currentFiles) {
       if (!target.has(asTrackedPath(relPath)) && !requiredDirs.has(relPath)) {
+        const fullPath = posix.join(root, relPath);
+        // A step-0 snapshot path can reach step 4 pointing at nothing: an
+        // ancestor may have been reshaped by step 3's reverse-direction
+        // blocking-entry removal (e.g. directory `node` became target file
+        // `node`), so `node/child`'s parent is now a file and `exists`
+        // reports `BadResource` (Node maps ENOTDIR to that reason, not to
+        // `NotFound`). Treat that parent-reshaped case as gone too — there
+        // is nothing on disk under `fullPath` to remove.
+        const exists = yield* Effect.catchAll(fs.exists(fullPath), (error) =>
+          error._tag === "SystemError" && error.reason === "BadResource"
+            ? Effect.succeed(false)
+            : Effect.fail(error),
+        );
+        if (!exists) {
+          continue;
+        }
         // `recursive: true` even though this was a plain file in the
         // step-0 snapshot: an earlier step in *this same* materialize
         // call (e.g. step 3's reverse-direction blocking-entry removal)
         // may have turned its path into a directory since then. Node's
         // `rm` requires `recursive: true` to remove any directory, even
         // an empty one.
-        yield* fs.remove(posix.join(root, relPath), { recursive: true, force: true });
+        yield* fs.remove(fullPath, { recursive: true, force: true });
         removedPaths.push(relPath);
       }
     }

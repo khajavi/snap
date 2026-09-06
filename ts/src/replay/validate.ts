@@ -6,10 +6,7 @@
  *   2. sorting, one value per dot, contiguity      -- FULLY IMPLEMENTED
  *   3. base closure and the revision formula       -- FULLY IMPLEMENTED
  *   4. acyclic causality                           -- FULLY IMPLEMENTED
- *   5. every change against its materialized base  -- PARTIALLY IMPLEMENTED
- *                                                      (see
- *                                                      `checkChangesAgainstMaterializedBase`'s
- *                                                      `TODO(Phase 4)` below)
+ *   5. every change against its materialized base  -- FULLY IMPLEMENTED
  *   6. deterministic replay of the declared        -- FULLY IMPLEMENTED,
  *      frontier                                       structurally (see below)
  *
@@ -24,19 +21,24 @@
  * genuinely computable now -- unlike the *general* case of point 5, which
  * needs the actual materialized tree (Phase 4/5's replay machinery).
  *
- * Point 5's "partially" qualifier: a patch whose `base` is the empty
- * version (`[]`) has a materialized base tree that is unambiguously the
- * empty tree -- there are zero patches to integrate, so no replay
- * machinery is needed to know every path is absent. That trivial case is
- * fully and soundly checked below; every other case (`base` nonempty)
- * needs real replay and is deferred, not approximated -- see the
- * `TODO(Phase 4)` on `checkChangesAgainstMaterializedBase`.
+ * Point 5 is now fully implemented (Phases 4-5 landed the replay
+ * machinery it needed): each patch's exact base tree is materialized by
+ * `replay/replay.ts`'s canonical replay of the patch's base version, and
+ * every change is checked against it per SPEC §4.3's rules (existence,
+ * no-op, and — for text edits — old-token consumption and canonical
+ * result). Replay failures on a base version (a stranded base, a stall)
+ * are NOT reported here: points 3/4/6 own those conditions, and point 5
+ * runs before point 6, so reporting a replay-structure failure first
+ * could reorder which condition the suite's pinned diagnostics name.
  */
 
 import { Either } from "effect";
+import { Buffer } from "node:buffer";
 import { isDeepStrictEqual } from "node:util";
+import { applyEditScript, type EditScript } from "../domain/diff.js";
 import { compareContributorIds } from "../domain/contributor.js";
-import { revisionOfVersionPairs, type Dot, type Patch } from "../domain/patch.js";
+import { revisionOfVersionPairs, type Change, type Dot, type Patch } from "../domain/patch.js";
+import { isCanonicalTokenSequence } from "../domain/text.js";
 import {
   causalClosureOf,
   decodeRepository,
@@ -60,6 +62,9 @@ import {
   UnsortedPatchesError,
   type DotRef,
 } from "../errors/domain-errors.js";
+import type { Tree } from "./integrate.js";
+import { replay, versionOfPairs } from "./replay.js";
+import { pathStateFromBytes, pathStatesEqual, type PathState } from "./tiebreak.js";
 
 /** The union of every error `validateRepository` (points 1-4, 5's partial case, and 6) can produce. */
 export type RepositoryValidationError =
@@ -233,8 +238,68 @@ export function checkAcyclicCausality(
 }
 
 // ---------------------------------------------------------------------------
-// Point 5: every change against its materialized exact base -- STUBBED
+// Point 5: every change against its materialized exact base
 // ---------------------------------------------------------------------------
+
+/**
+ * Classifies a text change's edit script against the base path's old token
+ * sequence (§4.4: "The script MUST consume the complete old token
+ * sequence; there is no implicit trailing retain"). Returns `undefined`
+ * when the script consumes exactly the old sequence, otherwise the COMPLETE
+ * diagnostic, naming the path:
+ *
+ *   - `edit of <path> does not consume old content` when it stops short
+ *     (`tests/15-repository-validation.yaml`'s `{"retain": 1}` against two
+ *     old tokens; the suite pins the phrase as a substring);
+ *   - `edit of <path> consumes beyond old content` when it overruns them
+ *     (`tests/23-strict-validation-matrix.yaml`'s `{"delete": 2}` against
+ *     one old token — the pin `.+consumes beyond old content` is
+ *     end-anchored, so the path goes BEFORE the phrase; this is also what
+ *     any retain/delete against an absent or non-text base produces, since
+ *     those expose zero old tokens).
+ */
+function editScriptMalformedReason(
+  path: string,
+  oldTokens: ReadonlyArray<string>,
+  edit: EditScript,
+): `edit of ${string} does not consume old content` | `edit of ${string} consumes beyond old content` | undefined {
+  let consumed = 0;
+  for (const op of edit) {
+    if ("retain" in op) {
+      consumed += op.retain;
+    } else if ("delete" in op) {
+      consumed += op.delete;
+    }
+    if (consumed > oldTokens.length) {
+      return `edit of ${path} consumes beyond old content`;
+    }
+  }
+  return consumed === oldTokens.length
+    ? undefined
+    : `edit of ${path} does not consume old content`;
+}
+
+/**
+ * Materializes one change's per-path effect on the base tree (existence
+ * plus content) — §6.2's `T` ("let `T` be the authored result of applying
+ * that change to `B`"), built exactly as `replay/integrate.ts` builds it,
+ * without integrating anything. Only called once the change's edit script
+ * (if any) has passed `editScriptMalformedReason`, so `applyEditScript`'s
+ * consumption invariant holds by construction and cannot throw.
+ */
+function changeTargetState(baseTree: Tree, change: Change): PathState {
+  switch (change.type) {
+    case "text": {
+      const base = baseTree.get(change.path);
+      const baseTokens = base !== undefined && base._tag === "Text" ? base.tokens : [];
+      return { _tag: "Text", tokens: applyEditScript(baseTokens, change.edit) };
+    }
+    case "put":
+      return pathStateFromBytes(Buffer.from(change.content, "base64"));
+    case "delete":
+      return { _tag: "Absent" };
+  }
+}
 
 /**
  * SPEC §4.5 point 5: "every change against its materialized exact
@@ -244,80 +309,125 @@ export function checkAcyclicCausality(
  * existence or bytes is invalid, except that an empty text edit may
  * create an empty file."
  *
- * PARTIALLY IMPLEMENTED in this phase: only the trivial case where a
- * patch's `base` is the empty version (`[]`) is checked. That base is
- * unambiguously the empty tree -- there is nothing to replay, so every
- * path is definitionally absent, with zero risk of the concurrency
- * ambiguity the general case has. Concretely, for such a patch: a
- * `delete` change is always invalid (`ChangeBaseConflictError`, matching
- * `tests/23-strict-validation-matrix.yaml`'s "delete of absent path: f"
- * case), and a `text` change's edit script may not contain a `retain` or
- * `delete` op (there are zero old tokens to retain or delete against).
- * `text`/`put` creations are always valid onto the empty tree.
+ * Fully implemented: each patch's exact base tree is materialized through
+ * `replay/replay.ts`'s canonical replay of the patch's base version —
+ * Phase 4-5's selection, integration, and OT machinery, which histories
+ * with concurrent edits genuinely need here. Per change:
  *
- * Every patch with a NONEMPTY `base` is skipped here -- deliberately, not
- * approximated.
+ *   - a `text` edit script that does not consume exactly the base path's
+ *     old tokens is rejected with the pinned under/over-consumption
+ *     diagnostics (see `editScriptMalformedReason`);
+ *   - a `delete` of an absent path is rejected with the pinned
+ *     `delete of absent path: <path>` (tests 15/23);
+ *   - a `text` edit of a present non-text path is rejected (§4.4's edit
+ *     mechanics are defined over a text file's old tokens);
+ *   - any other present→present change that alters neither bytes nor
+ *     existence is rejected as a `no-op change` (test 15's "no op": a put
+ *     of the same bytes; test 27's "create present": an empty script on an
+ *     occupied path) — an empty script on an ABSENT path is §4.3's valid
+ *     empty-file creation and passes;
+ *   - everything else (creations, replacements, deletes of present paths,
+ *     binary↔text transitions through `put`) is valid.
  *
- * TODO(Phase 4): A nonempty `base` is a full vector clock that can
- * include several contributors' concurrent patches, so "materialize the
- * base tree" there is exactly `replay/replay.ts`'s job:
- * `replay/select.ts`'s ready-set/Snap-order integration sequencing,
- * `replay/integrate.ts`'s per-path case dispatch (including its own
- * namespace-conflict precheck), and `replay/ot.ts`'s text transform for
- * concurrent text edits on the same path -- none of which exist yet
- * (they're Phase 4/5 modules). Two shortcuts were considered and rejected
- * for the nonempty-base case in this phase: (a) re-implementing a slice
- * of replay here, which would duplicate logic and risk silently drifting
- * from the real `replay/replay.ts` once it lands; (b) approximating
- * "present in the base tree" with a naive ancestry walk ("was this path
- * ever created, and never deleted, along *some* path back to the
- * base?"), which is unsound the moment the base's history contains
- * concurrent edits/deletes of the same path that Snap's tie-break rules
- * (§6.4) resolve one way but a naive walk would resolve another (or not
- * at all, for the OT text/text case) -- exactly the scenario
- * `tests/15-repository-validation.yaml`'s "does not consume old content"
- * and `tests/23-strict-validation-matrix.yaml`'s "consumes beyond old
- * content"/"no-op change" cases exercise, which this phase's
- * unit tests confirm are NOT rejected by this function alone. Once
- * `replay/replay.ts` exists, this function should materialize
- * `patch.base` through it and check every patch's `changes` against the
- * resulting path set (and, for the no-op rule, byte content) uniformly,
- * replacing the empty-base special case below rather than keeping it
- * alongside the general one.
+ * A base-version replay failure (`IncompleteBaseClosureError` or
+ * `ReplayNotReadyError`) is swallowed and the patch skipped — points 3, 4,
+ * and 6 own replay-structure conditions, and point 5 runs before point 6,
+ * so reporting them here could reorder which pinned diagnostic a malformed
+ * history produces first.
  */
 export function checkChangesAgainstMaterializedBase(
   repository: Repository,
 ): Either.Either<void, ChangeBaseConflictError> {
   for (const patch of repository.patches) {
-    if (patch.base.length > 0) {
-      continue; // General case: deferred to Phase 4, see the TODO above.
+    const baseReplay = replay(versionOfPairs(patch.base), repository.patches);
+    if (Either.isLeft(baseReplay)) {
+      continue; // Replay-structure failure: points 3/4/6 own it (see docstring).
     }
+    const baseTree = baseReplay.right.tree;
+
     for (const change of patch.changes) {
-      if (change.type === "delete") {
+      const baseState = baseTree.get(change.path);
+      const basePresent = baseState !== undefined;
+
+      if (change.type === "text") {
+        const malformedReason = editScriptMalformedReason(
+          change.path,
+          baseState !== undefined && baseState._tag === "Text" ? baseState.tokens : [],
+          change.edit,
+        );
+        if (malformedReason !== undefined) {
+          return Either.left(
+            new ChangeBaseConflictError({
+              patch: toDotRef(patch),
+              path: change.path,
+              reason: malformedReason,
+            }),
+          );
+        }
+      }
+
+      const target = changeTargetState(baseTree, change);
+
+      // §4.4: applying the script "MUST produce exactly the canonical token
+      // sequence of the result" — a script whose result token sequence is
+      // not canonical (e.g. test 27's `insert ["a","b"]` creating a file
+      // with an interior token lacking its trailing LF) is invalid.
+      if (change.type === "text" && target._tag === "Text" && !isCanonicalTokenSequence(target.tokens)) {
         return Either.left(
           new ChangeBaseConflictError({
             patch: toDotRef(patch),
             path: change.path,
-            reason: "delete of absent path",
+            reason: `edit result is not a canonical token sequence: ${change.path}`,
           }),
         );
       }
-      if (change.type === "text") {
-        for (const op of change.edit) {
-          if ("retain" in op || "delete" in op) {
-            return Either.left(
-              new ChangeBaseConflictError({
-                patch: toDotRef(patch),
-                path: change.path,
-                reason: "edit references old content that does not exist",
-              }),
-            );
-          }
+
+      if (change.type === "delete") {
+        if (!basePresent) {
+          return Either.left(
+            new ChangeBaseConflictError({
+              patch: toDotRef(patch),
+              path: change.path,
+              // Composed here in full; the renderer prints the reason bare,
+              // producing the exactly-pinned `delete of absent path: f`
+              // (tests/23).
+              reason: `delete of absent path: ${change.path}`,
+            }),
+          );
         }
+        continue; // A delete of a present path always alters existence.
       }
-      // A "put" change and a "text" change with only `insert` operations
-      // (or the empty script) are always valid creations onto the empty
-      // tree.
+
+      if (!basePresent) {
+        // A creation (text with inserts or an empty script, or a put):
+        // §4.3 requires the path to be absent, and it is. The empty-script
+        // empty-file creation is §4.3's explicit exception and lands here.
+        continue;
+      }
+
+      if (change.type === "text" && baseState!._tag !== "Text") {
+        return Either.left(
+          new ChangeBaseConflictError({
+            patch: toDotRef(patch),
+            path: change.path,
+            reason: `text edit of non-text content: ${change.path}`,
+          }),
+        );
+      }
+
+      // §4.3's no-op rule: "A change that does not alter path existence or
+      // bytes is invalid." (Its exception — the empty-script creation —
+      // already continued above; on an occupied path an empty script is a
+      // no-op and is rejected here, as is a put of identical bytes.)
+      if (pathStatesEqual(baseState!, target)) {
+        return Either.left(
+          new ChangeBaseConflictError({
+            patch: toDotRef(patch),
+            path: change.path,
+            reason: `no-op change: ${change.path}`,
+          }),
+        );
+      }
     }
   }
   return Either.right(undefined);
@@ -455,7 +565,7 @@ export function checkFrontierReplay(
 export function validateRepository(
   input: unknown,
 ): Either.Either<Repository, RepositoryValidationError> {
-  const decoded = decodeRepository(input); // 1. schema
+  const decoded = decodeRepository(input); // 1. schema (after the key-structure lint)
   if (Either.isLeft(decoded)) {
     return decoded;
   }

@@ -115,6 +115,20 @@ export class ContributorIdRequiredError extends Data.TaggedError("ContributorIdR
 export const CONTRIBUTOR_ID_REQUIRED_DETAIL =
   "contributor.id is required; configure it locally or globally";
 
+/**
+ * `config --global` (SPEC.md §7.2) was asked to write
+ * `$HOME/.snapconfig.json`, but `$HOME` is unset — SPEC.md §8's "If
+ * `$HOME` is absent, global configuration is unavailable." The read path
+ * (`resolveContributorId`) treats that as "no value", but a write has no
+ * fallback location, so it fails. Detail is unprefixed per the
+ * `ConfigDecodeError` convention.
+ */
+export class GlobalHomeUnavailableError extends Data.TaggedError("GlobalHomeUnavailableError")<{}> {}
+
+/** The exact pinned detail text for `GlobalHomeUnavailableError`, unprefixed. */
+export const GLOBAL_HOME_UNAVAILABLE_DETAIL =
+  "global configuration is unavailable: HOME is not set";
+
 // ---------------------------------------------------------------------------
 // Pure core — a duplicate-key-aware JSON parser
 // ---------------------------------------------------------------------------
@@ -492,6 +506,18 @@ export class ConfigService extends Context.Tag("snap/ConfigService")<
       repoRoot: string,
       rawId: string,
     ) => Effect.Effect<void, InvalidContributorIdError | PlatformError>;
+
+    /**
+     * Validates `rawId` exactly like `writeLocalContributorId` and, on
+     * success, writes `$HOME/.snapconfig.json` as
+     * `{"contributor":{"id":"<rawId>"}}` — SPEC.md §7.2's global variant,
+     * which "needs no repository". Fails with `GlobalHomeUnavailableError`
+     * when `$HOME` is unset or empty (SPEC.md §8: "If `$HOME` is absent,
+     * global configuration is unavailable"); `$HOME` is never created.
+     */
+    readonly writeGlobalContributorId: (
+      rawId: string,
+    ) => Effect.Effect<void, InvalidContributorIdError | GlobalHomeUnavailableError | PlatformError>;
   }
 >() {}
 
@@ -571,6 +597,24 @@ export const ConfigServiceLive = Layer.effect(
         );
       });
 
-    return { resolveContributorId, requireContributorId, writeLocalContributorId };
+    const writeGlobalContributorId = (
+      rawId: string,
+    ): Effect.Effect<void, InvalidContributorIdError | GlobalHomeUnavailableError | PlatformError> =>
+      Effect.gen(function* () {
+        const parsedId = parseContributorId(rawId);
+        if (Either.isLeft(parsedId)) {
+          return yield* Effect.fail(parsedId.left);
+        }
+        const home = process.env["HOME"];
+        if (home === undefined || home === "") {
+          return yield* Effect.fail(new GlobalHomeUnavailableError());
+        }
+        yield* fs.writeFileString(
+          `${home}/${GLOBAL_CONFIG_FILE_NAME}`,
+          encodeConfig({ contributor: { id: parsedId.right } }),
+        );
+      });
+
+    return { resolveContributorId, requireContributorId, writeLocalContributorId, writeGlobalContributorId };
   }),
 );
