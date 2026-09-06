@@ -29,15 +29,46 @@
  */
 
 import { NodeFileSystem } from "@effect/platform-node";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Either, Exit, Layer } from "effect";
 import { parseArgs } from "./cli/args.js";
 import { fromEither } from "./cli/from-either.js";
-import { dispatch, renderErrorLine, type CommandOutput, type DispatchError } from "./cli/dispatch.js";
+import {
+  dispatch,
+  renderErrorLine,
+  setPrintUrl,
+  setServeShutdown,
+  type CommandOutput,
+  type DispatchError,
+} from "./cli/dispatch.js";
 import { ConfigServiceLive } from "./config/config.js";
 import { RepoStoreLive } from "./repo-store/store.js";
+import { resolveStreamModes, type StreamModes } from "./presentation/mode.js";
+import { errorLine, renderFamilyOutput } from "./presentation/render.js";
 
-process.on("SIGINT", () => process.exit(130));
-process.on("SIGTERM", () => process.exit(143));
+/**
+ * Process-lifecycle signals (plan.md §1.2): the default exits follow the
+ * shell convention — SIGINT 130, SIGTERM 143. When `--serve` is running,
+ * its installed shutdown handler *replaces* these: §7.9 requires serving
+ * "until SIGINT or SIGTERM, then exits 0", closing the server after the
+ * in-flight response finishes. The indirection is a single slot so the
+ * serve path can swap the behavior without touching Effect's runtime.
+ */
+let exitOnSignal = (code: 130 | 143): void => process.exit(code);
+
+process.on("SIGINT", () => exitOnSignal(130));
+process.on("SIGTERM", () => exitOnSignal(143));
+
+// `--serve` swaps the signal behavior and captures the plain URL printer
+// (§7.11: the startup URL stays plain in both presentations).
+setPrintUrl((url) => process.stdout.write(url));
+setServeShutdown((handle) => {
+  exitOnSignal = () => {
+    void handle
+      .close()
+      .then(() => process.exit(0))
+      .catch(() => process.exit(0));
+  };
+});
 
 /** The bytes to write to each stream, with the process's exit code. */
 interface RunResult {
@@ -47,38 +78,64 @@ interface RunResult {
 }
 
 /**
- * Folds a run's `Cause` into the concrete `RunResult` to write out. A
- * `Fail` cause is a value of the program's error channel (`DispatchError`,
- * since parse and dispatch share it); any other cause shape is an
- * internal failure and is never printed as a diagnostic.
+ * §7.11's per-stream presentation selection, resolved once from the real
+ * environment *before command execution* — an invalid `SNAP_COLOR` must
+ * fail before any command runs. The harness's redirected streams are
+ * non-TTY, so `auto` resolves plain there; unit tests exercise the TTY
+ * combinations directly against `resolveStreamModes` (SPEC.md §11's
+ * per-implementation requirement).
  */
-const toRunResult = (exit: Exit.Exit<CommandOutput, DispatchError>): RunResult => {
-  if (Exit.isSuccess(exit)) {
-    return { stdout: exit.value.stdout, stderr: exit.value.stderr, exitCode: 0 };
-  }
-  const cause = exit.cause;
-  if (Cause.isFailType(cause)) {
-    return { stdout: "", stderr: renderErrorLine(cause.error as DispatchError), exitCode: 1 };
-  }
-  return { stdout: "", stderr: "snap: internal error\n", exitCode: 2 };
-};
-
-// Effects are lazy; build the whole pipeline before running it.
-const handled = Effect.flatMap(fromEither(parseArgs(process.argv.slice(2))), dispatch).pipe(
-  Effect.exit,
-  Effect.map(toRunResult),
+const selectedModes = resolveStreamModes(
+  process.env["SNAP_COLOR"],
+  "NO_COLOR" in process.env,
+  process.stdout.isTTY === true,
+  process.stderr.isTTY === true,
 );
 
-// `RepoStoreLive` reads the config, which reads the filesystem: feed each
-// inner layer into the next with `provideMerge`, so the merged layer's
-// output carries every service the program can require.
-const AppLayer = RepoStoreLive.pipe(
-  Layer.provideMerge(ConfigServiceLive),
-  Layer.provideMerge(NodeFileSystem.layer),
-);
+if (Either.isLeft(selectedModes)) {
+  // §7.11: this error itself is plain, because no valid presentation was
+  // selected. It is emitted instead of running any command.
+  process.stderr.write(`snap: ${selectedModes.left}\n`);
+  process.exitCode = 1;
+} else {
+  const effective = selectedModes.right;
+  const renderError = (line: string): string => (effective.stderr === "terminal" ? errorLine(line) : line);
 
-const result = await Effect.runPromise(Effect.provide(handled, AppLayer));
+  /**
+   * Folds a run's `Cause` into the concrete `RunResult` to write out. A
+   * `Fail` cause is a value of the program's error channel
+   * (`DispatchError`, since parse and dispatch share it); any other cause
+   * shape is an internal failure and is never printed as a diagnostic.
+   */
+  const toRunResult = (exit: Exit.Exit<CommandOutput, DispatchError>): RunResult => {
+    if (Exit.isSuccess(exit)) {
+      return { ...renderFamilyOutput(exit.value, effective), exitCode: 0 };
+    }
+    const cause = exit.cause;
+    if (Cause.isFailType(cause)) {
+      const plain = renderErrorLine(cause.error as DispatchError);
+      return { stdout: "", stderr: renderError(plain), exitCode: 1 };
+    }
+    return { stdout: "", stderr: renderError("snap: internal error\n"), exitCode: 2 };
+  };
 
-process.stdout.write(result.stdout);
-process.stderr.write(result.stderr);
-process.exitCode = result.exitCode;
+  // Effects are lazy; build the whole pipeline before running it.
+  const handled = Effect.flatMap(fromEither(parseArgs(process.argv.slice(2))), dispatch).pipe(
+    Effect.exit,
+    Effect.map(toRunResult),
+  );
+
+  // `RepoStoreLive` reads the config, which reads the filesystem: feed
+  // each inner layer into the next with `provideMerge`, so the merged
+  // layer's output carries every service the program can require.
+  const AppLayer = RepoStoreLive.pipe(
+    Layer.provideMerge(ConfigServiceLive),
+    Layer.provideMerge(NodeFileSystem.layer),
+  );
+
+  const result = await Effect.runPromise(Effect.provide(handled, AppLayer));
+
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exitCode = result.exitCode;
+}

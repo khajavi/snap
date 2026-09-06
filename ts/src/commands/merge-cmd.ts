@@ -62,6 +62,7 @@ import {
   loadRepositoryAt,
   unionSortedPatches,
 } from "./repo-operand.js";
+import type { HttpRepositoryLoadError } from "../repo-store/http-source.js";
 import type { InvalidPathError } from "../domain/path.js";
 import { UnsupportedWorkingTreeEntryError, scanWorkingTree } from "../fs/tree-scan.js";
 import { materialize } from "../fs/materialize.js";
@@ -85,6 +86,7 @@ export type MergeError =
   | InvalidPathError
   | WorkingTreeDirtyError
   | PatchCollisionError
+  | HttpRepositoryLoadError
   | ReplayError;
 
 /** §7.8's one warning line for a merged warning pair, `warning: auto-resolved <path>: <reason>`. */

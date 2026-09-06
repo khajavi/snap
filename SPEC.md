@@ -647,6 +647,13 @@ trailing spaces of its own, and empty plain output remains empty.
   matching line, excluding LF, is wrapped by the first applicable style:
   `--- ` or `+++ ` uses `1`; `@@ ` uses `36`; `-` uses `31`; `+` uses `32`;
   `\ ` uses `2`; and `Binary files ` uses `33`. Other lines are unchanged.
+  These prefixes match the rendered plain-mode line text literally, in the
+  order just shown: a line is styled by the first listed prefix it starts
+  with, regardless of which diff operation produced it. A deleted or
+  inserted line whose own content begins with header-like text - for
+  example a deleted token `-- note`, which prints as `--- note` - is
+  therefore wrapped by the header style, not the deletion style;
+  `tests/28-terminal-presentation.yaml` pins this precedence.
 - `--version` is `S(1,"snap <semver>") + LF`.
 - A plain warning `warning: <detail>` becomes
   `S(33,"⚠") + " " + S(33,"<detail>") + LF`. A plain error line `<error>`

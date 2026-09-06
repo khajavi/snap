@@ -209,3 +209,24 @@ steps:
         - {type: exit_code, value: 0}
         - {type: stdout_equals, value: "\u001b[36m●\u001b[0m \u001b[1mmessage \u001b[0m\n  \u001b[36m(spaces@x->1)\u001b[0m \u001b[2mby\u001b[0m \u001b[35mspaces@x\u001b[0m\n"}
         - {type: stderr_equals, value: ""}
+
+  # Open Spec Issue 6 regression (SPEC.md §7.11): diff line styling is a
+  # literal prefix match on the rendered line, in the stated precedence
+  # order. A deleted token whose content starts with `-- ` prints as
+  # `--- ...` and therefore takes the HEADER style (1), not red; an
+  # inserted token starting with `++ ` prints as `+++ ...` and takes the
+  # header style too, not green. Pinned here so the precedence is explicit
+  # rather than accidental.
+  - run: {args: [init, dashes], expect: [{type: exit_code, value: 0}]}
+  - run: {cwd: dashes, args: [config, contributor.id, d@x], expect: [{type: exit_code, value: 0}]}
+  - write_file: {path: dashes/notes.txt, text: "-- note\nplain\n"}
+  - run: {cwd: dashes, args: [commit, dashes-base], expect: [{type: exit_code, value: 0}]}
+  - write_file: {path: dashes/notes.txt, text: "++ note\nplain\n"}
+  - run:
+      cwd: dashes
+      args: [diff]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "\u001b[1m--- a/notes.txt\u001b[0m\n\u001b[1m+++ b/notes.txt\u001b[0m\n\u001b[36m@@ -1,2 +1,2 @@\u001b[0m\n\u001b[1m--- note\u001b[0m\n\u001b[1m+++ note\u001b[0m\n plain\n"
+        - {type: stderr_equals, value: ""}

@@ -40,6 +40,11 @@ import { type Repository, dotKey, indexPatchesByDot } from "../domain/repository
 import { compareContributorIds } from "../domain/contributor.js";
 import { RepositoryNotFoundError } from "../repo-store/locate.js";
 import { RepoStore, type RepoStoreLoadError } from "../repo-store/store.js";
+import {
+  isHttpOperand,
+  loadHttpRepository,
+  type HttpRepositoryLoadError,
+} from "../repo-store/http-source.js";
 
 /**
  * A dot present in both repositories maps to structurally unequal parsed
@@ -175,13 +180,23 @@ export function repositoryAfterPatch(
  * HTTP/HTTPS operands are Phase 10's `repo-store/http-source.ts`; until
  * that phase this function treats any operand as a local path.
  */
+/**
+ * Loads the repository at `operand` (SPEC.md §9): an `http://`/`https://`
+ * URL performs §9's one exact-URL validated GET (`http-source.ts`);
+ * anything else is a local repository-root path resolved against the
+ * process working directory. Both sources feed the same validated
+ * `Repository` value; HTTP is read-only.
+ */
 export function loadRepositoryAt(
   operand: string,
 ): Effect.Effect<
   Repository,
-  RepositoryNotFoundError | RepoStoreLoadError | PlatformError,
+  RepositoryNotFoundError | RepoStoreLoadError | HttpRepositoryLoadError | PlatformError,
   FileSystem.FileSystem | RepoStore
 > {
+  if (isHttpOperand(operand)) {
+    return loadHttpRepository(operand);
+  }
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const absolute = resolve(operand);

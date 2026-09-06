@@ -30,11 +30,12 @@
  * invariants) are not values of this union; `main.ts` renders them as
  * `snap: internal error` with exit 2.
  *
- * **Serving stays phased.** `--serve`'s port validation is real (Phase 8,
- * tests/14), but running the HTTP server is Phase 10's `http/serve.ts`;
- * the `Serve` case runs the validation and then fails with
- * `CommandNotImplementedError`, so the server is not faked before its
- * phase. `Serve` is the only remaining `NOT_IMPLEMENTED` entry.
+ * **Serving is Phase 10's `http/serve.ts`.** The `Serve` case runs the
+ * validated-port command module, then hands the port to `serveRepository`:
+ * bind loopback, print the plain startup URL (§7.11: it stays plain in
+ * both presentations), and block until SIGINT/SIGTERM — whose handlers
+ * close the server and exit 0 per §7.9. The URL callback is injected so
+ * dispatch stays stream-agnostic.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -71,6 +72,8 @@ import { revertCmd, type RevertError, TargetTreeAlreadyCurrentError, TARGET_TREE
 import { mergeCmd, type MergeError } from "../commands/merge-cmd.js";
 import { diffCmd, type DiffError } from "../commands/diff-cmd.js";
 import { serveCmd, InvalidPortError } from "../commands/serve-cmd.js";
+import { serveRepository, type ServeHandle } from "../http/serve.js";
+import { HttpRepositoryStatusError } from "../repo-store/http-source.js";
 import { WorkingTreeCleanError, WorkingTreeDirtyError, RevisionOverflowError, WORKING_TREE_CLEAN_DETAIL, WORKING_TREE_DIRTY_DETAIL, REVISION_OVERFLOW_DETAIL } from "../commands/tree-ops.js";
 import { UnknownVersionError } from "../commands/unknown-version.js";
 import { PatchCollisionError } from "../commands/repo-operand.js";
@@ -95,6 +98,7 @@ import {
   UnsortedPatchesError,
 } from "../errors/domain-errors.js";
 import { InvalidCommandOrArgumentsError, InvalidDiffUsageError, type Command } from "./args.js";
+import type { FamilyOutput, OutputFamily } from "../presentation/render.js";
 
 // ---------------------------------------------------------------------------
 // The command output value
@@ -106,36 +110,15 @@ import { InvalidCommandOrArgumentsError, InvalidDiffUsageError, type Command } f
  * today only `merge`'s `warning: auto-resolved ...` lines (SPEC.md §7.8).
  * Errors are not "output": they flow through `DispatchError` and render as
  * one `snap: <detail>` line on stderr, never through this value.
+ *
+ * The stdout bytes are always **plain-mode** (§7.11: presentation must not
+ * change command execution), tagged with the §7.11 output family the
+ * presentation layer restyles in terminal mode — see `FamilyOutput`.
  */
-export interface CommandOutput {
-  readonly stdout: string;
-  readonly stderr: string;
-}
+export type CommandOutput = FamilyOutput;
 
-/** Lifts a command module's stdout-only result into a full `CommandOutput`. */
-const asOutput = (stdout: string): CommandOutput => ({ stdout, stderr: "" });
-
-// ---------------------------------------------------------------------------
-// Phase-boundary error (the serve HTTP server lands in Phase 10)
-// ---------------------------------------------------------------------------
-
-/**
- * The command parsed and dispatched successfully, but its implementation
- * belongs to a later sub-job. The only command still on this path is
- * `--serve` (valid port → the server is Phase 10's `http/serve.ts`);
- * `main.ts` renders it like any other expected error (exit 1).
- */
-export class CommandNotImplementedError extends Data.TaggedError("CommandNotImplementedError")<{
-  readonly command: string;
-}> {}
-
-/** The commands whose real modules do not exist yet, by dispatch tag. */
-const NOT_IMPLEMENTED: ReadonlySet<string> = new Set(["Serve"]);
-
-/** Display names for the not-yet-implemented commands, by dispatch tag. */
-const COMMAND_LABELS: Readonly<Record<string, string>> = {
-  Serve: "--serve",
-};
+/** Lifts a command module's stdout-only result into a family-tagged output. */
+const asOutput = (stdout: string, family: OutputFamily): CommandOutput => ({ stdout, stderr: "", family });
 
 // ---------------------------------------------------------------------------
 // The dispatch error union
@@ -150,7 +133,8 @@ const COMMAND_LABELS: Readonly<Record<string, string>> = {
 export type DispatchError =
   | InvalidCommandOrArgumentsError
   | InvalidDiffUsageError
-  | CommandNotImplementedError
+  | InvalidPortError
+  | HttpRepositoryStatusError
   | InitError
   | ConfigCommandError
   | StatusError
@@ -229,8 +213,9 @@ export function errorDetail(error: DispatchError): string {
     case "InvalidCommandOrArgumentsError":
     case "InvalidDiffUsageError":
       return error.message;
-    case "CommandNotImplementedError":
-      return `${COMMAND_LABELS[error.command] ?? error.command} is not implemented yet`;
+    case "HttpRepositoryStatusError":
+      // §9's non-200 detail, pinned by tests/13's `HTTP 302` redirect case.
+      return `HTTP ${error.status}`;
     case "RepositoryNotFoundError":
       return REPOSITORY_NOT_FOUND_DETAIL;
     case "RepositoryJsonSyntaxError":
@@ -322,33 +307,73 @@ export function renderErrorLine(error: DispatchError): string {
  * locates one, per SPEC.md §7.10), so this function carries no filesystem
  * work of its own.
  */
+/**
+ * Injected by `main.ts`: writes (and flushes) the `--serve` startup URL
+ * line. Plain bytes in both presentations, per §7.11.
+ */
+export type PrintUrl = (url: string) => void;
+
+/** Module-level seam for the `--serve` URL printer (see `dispatch`). */
+let printUrl: PrintUrl = () => undefined;
+
+/** Installs the `--serve` URL printer; called once from `main.ts`. */
+export function setPrintUrl(impl: PrintUrl): void {
+  printUrl = impl;
+}
+
+/**
+ * Injected by `main.ts`: installs §7.9's signal shutdown for a *ready*
+ * serve handle — on SIGINT/SIGTERM, close the server (its `close`
+ * resolves after the in-flight response finishes) and exit 0.
+ */
+export type RegisterServeShutdown = (handle: ServeHandle) => void;
+
+/** Module-level seam for the `--serve` shutdown installer. */
+let registerServeShutdown: RegisterServeShutdown = () => undefined;
+
+/** Installs the `--serve` shutdown installer; called once from `main.ts`. */
+export function setServeShutdown(impl: RegisterServeShutdown): void {
+  registerServeShutdown = impl;
+}
+
 export function dispatch(
   command: Command,
 ): Effect.Effect<CommandOutput, DispatchError, DispatchServices> {
   switch (command._tag) {
     case "Init":
-      return Effect.map(initCmd(command.path), asOutput);
+      // §7.11: init's plain `()` becomes the "Initialized repository" banner.
+      return Effect.map(initCmd(command.path), (out) => asOutput(out, { kind: "banner", label: "Initialized repository" }));
     case "Config":
-      return Effect.map(configCmd(command.global, command.id), asOutput);
+      // §7.11: config remains silent in both presentations.
+      return Effect.map(configCmd(command.global, command.id), (out) => asOutput(out, { kind: "silent" }));
     case "Status":
-      return Effect.map(statusCmd(), asOutput);
+      return Effect.map(statusCmd(), (out) => asOutput(out, { kind: "status" }));
     case "Log":
-      return Effect.map(logCmd(), asOutput);
+      return Effect.map(logCmd(), (out) => asOutput(out, { kind: "log" }));
     case "Commit":
-      return Effect.map(commitCmd(command.message), asOutput);
+      return Effect.map(commitCmd(command.message), (out) => asOutput(out, { kind: "banner", label: "Committed" }));
     case "Revert":
-      return Effect.map(revertCmd(command.version), asOutput);
+      return Effect.map(revertCmd(command.version), (out) => asOutput(out, { kind: "banner", label: "Reverted" }));
     case "Diff":
-      return Effect.map(diffCmd(command.target), asOutput);
+      return Effect.map(diffCmd(command.target), (out) => asOutput(out, { kind: "diff" }));
     case "Merge":
-      return mergeCmd(command.repository);
+      return Effect.map(mergeCmd(command.repository), (out) => ({ ...out, family: { kind: "banner", label: "Merged" } as const }));
     case "Version":
       // §7.10's `snap <semver>` line; version-cmd supplies the semver.
-      return Effect.map(versionCmd, (result) => asOutput(`snap ${result.version}\n`));
+      return Effect.map(versionCmd, (result) => asOutput(`snap ${result.version}\n`, { kind: "version" }));
     case "Serve":
-      // §7.9's port validation is real (Phase 8); the server is Phase 10.
-      return Effect.flatMap(serveCmd(command.port), () =>
-        Effect.fail(new CommandNotImplementedError({ command: "Serve" })),
+      // §7.9: validate the port, then serve the startup snapshot. Startup
+      // failures (invalid port already filtered by `serveCmd`; missing or
+      // invalid repository) fail this Effect normally and render as the
+      // standard one-line error. On success the URL has been printed and
+      // the shutdown handler installed; the Effect deliberately never
+      // completes — the process's own SIGINT/SIGTERM handler closes the
+      // server (finishing any in-flight response) and exits 0.
+      return Effect.flatMap(serveCmd(command.port), (port) =>
+        Effect.flatMap(serveRepository(port, printUrl), (handle) => {
+          registerServeShutdown(handle);
+          return Effect.never;
+        }),
       );
   }
 }

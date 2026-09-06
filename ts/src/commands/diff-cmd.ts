@@ -53,6 +53,7 @@ import { UnsupportedWorkingTreeEntryError, scanWorkingTree } from "../fs/tree-sc
 import { replay, versionOfPairs, type ReplayError } from "../replay/replay.js";
 import { locateRepository, RepositoryNotFoundError } from "../repo-store/locate.js";
 import { RepoStore, type RepoStoreLoadError } from "../repo-store/store.js";
+import type { HttpRepositoryLoadError } from "../repo-store/http-source.js";
 import type { Patch } from "../domain/patch.js";
 
 /** Every error `diffCmd` can produce. */
@@ -65,7 +66,8 @@ export type DiffError =
   | InvalidPathError
   | ReplayError
   | UnknownVersionError
-  | PatchCollisionError;
+  | PatchCollisionError
+  | HttpRepositoryLoadError;
 
 /** §7.6's working-tree arity: current tree vs the scan of the working tree. */
 function diffWorkingTree(

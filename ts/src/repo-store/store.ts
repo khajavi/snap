@@ -316,8 +316,13 @@ export class RepositoryJsonSyntaxError extends Data.TaggedError("RepositoryJsonS
 /**
  * Parses `text` via `parseJsonNoDuplicateKeys`, mapping any parse failure
  * to `RepositoryJsonSyntaxError`.
+ *
+ * Exported (not module-private) so `repo-store/http-source.ts`'s HTTP
+ * body parse reuses the *same* duplicate-key-aware parser as the on-disk
+ * store — the two repository sources cannot drift in what JSON they
+ * accept.
  */
-function parseRepositoryJson(text: string): Either.Either<JsonValue, RepositoryJsonSyntaxError> {
+export function parseRepositoryJsonEncoded(text: string): Either.Either<JsonValue, RepositoryJsonSyntaxError> {
   try {
     return Either.right(parseJsonNoDuplicateKeys(text));
   } catch (error) {
@@ -439,7 +444,7 @@ export const RepoStoreLive = Layer.effect(
     const load = (repoRoot: string): Effect.Effect<Repository, RepoStoreLoadError> =>
       Effect.gen(function* () {
         const text = yield* fs.readFileString(`${repoRoot}/${REPOSITORY_RELATIVE_PATH}`);
-        const parsed = parseRepositoryJson(text);
+        const parsed = parseRepositoryJsonEncoded(text);
         if (Either.isLeft(parsed)) {
           return yield* Effect.fail(parsed.left);
         }
