@@ -68,6 +68,28 @@ The package npm-cis the lockfile in a fixed-output fetch, esbuild-bundles
 `ts/src/main.ts` into a single self-contained `main.mjs`, and wraps it with
 Node — no `node_modules` ships with the installed package.
 
+## Develop with Nix
+
+The flake also exposes a `devShell` for working on the implementation. It
+provides Node 22 (`nodejs_22`), matching the `@types/node ^22` used by the
+TypeScript edition:
+
+```bash
+nix develop              # enter the dev shell
+nix develop --command bash   # same shell, one command (classic nix-shell ergonomics)
+```
+
+There is no `shell.nix`, so plain `nix-shell` finds nothing — use the flake
+entry point above instead.
+
+Other useful flake commands:
+
+```bash
+nix run .#snap -- --version   # run the CLI without installing it
+nix build                     # build the derivation, producing ./result/bin/snap
+nix profile install .#snap    # install the CLI to ~/.nix-profile/bin
+```
+
 ## Run Snap
 
 From the repository root (or with `snap` on your PATH via Nix):
