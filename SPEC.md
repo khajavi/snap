@@ -454,6 +454,12 @@ Options occur exactly in the positions shown below and may appear at most once.
 Unknown options, extra operands, and missing option values are errors. Local
 repository operands resolve against the process working directory.
 
+`snap --help` takes no further arguments and succeeds without locating a
+repository, reading configuration, or touching the filesystem. It prints a
+short usage summary: one synopsis line per command in §7.1–§7.9, then the
+`snap --version` and `snap --help` lines, in that order. A `snap --help`
+invocation with any additional argument is an ordinary grammar failure.
+
 ### 7.1 `snap init [path]`
 
 - `path` defaults to `.` and is created if absent.
@@ -602,6 +608,28 @@ warnings, and prints the unchanged version.
 
 Prints `snap <semver>` without locating a repository.
 
+### 7.10a `snap --help`
+
+Prints one synopsis line per command, exactly:
+
+```text
+usage: snap init [path]
+usage: snap config [--global] contributor.id <id>
+usage: snap status
+usage: snap log
+usage: snap commit <message>
+usage: snap diff [<old> <new> [--repo <repository>]]
+usage: snap revert <version>
+usage: snap merge <repository>
+usage: snap --serve [port]
+usage: snap --version
+usage: snap --help
+```
+
+Without locating a repository and without touching the filesystem. Nothing is
+written to stderr. Like `--version`, `--help` is a top-level option: it is
+recognized only as the first argument.
+
 ### 7.11 Terminal presentation and color
 
 Snap has two output presentations. **Plain mode** is the byte-stable interface
@@ -665,6 +693,8 @@ trailing spaces of its own, and empty plain output remains empty.
   therefore wrapped by the header style, not the deletion style;
   `tests/28-terminal-presentation.yaml` pins this precedence.
 - `--version` is `S(1,"snap <semver>") + LF`.
+- `--help` wraps each synopsis line from §7.10a in `S(1,"usage:") + " " +
+  synopsis + LF`, preserving their order. Nothing else is styled.
 - A plain warning `warning: <detail>` becomes
   `S(33,"⚠") + " " + S(33,"<detail>") + LF`. A plain error line `<error>`
   becomes `S(31,"✗ " + <error>) + LF`.

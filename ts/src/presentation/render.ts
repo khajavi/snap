@@ -157,6 +157,25 @@ export function versionScreen(semver: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// --help (§7.11's --help bullet)
+// ---------------------------------------------------------------------------
+
+/**
+ * §7.11's terminal `--help` layout: each plain synopsis line's `usage:`
+ * prefix is restyled bold, the synopsis text after it is unchanged.
+ * Accepts the plain block with or without its trailing LF; output always
+ * ends with exactly one.
+ */
+export function helpScreen(plain: string): string {
+  const body = plain.endsWith("\n") ? plain.slice(0, -1) : plain;
+  return `${mapLines(body + "\n", (line) =>
+    line.startsWith("usage: ")
+      ? `${styled(CODE.bold, "usage:")} ${line.slice("usage: ".length)}`
+      : line,
+  )}`;
+}
+
+// ---------------------------------------------------------------------------
 // Warnings and errors (§7.11's seventh bullet)
 // ---------------------------------------------------------------------------
 
@@ -210,6 +229,7 @@ export type OutputFamily =
   | { readonly kind: "log" }
   | { readonly kind: "diff" }
   | { readonly kind: "version" }
+  | { readonly kind: "help" }
   | { readonly kind: "silent" }
   | { readonly kind: "url" };
 
@@ -276,6 +296,8 @@ function stdoutTerminal(output: FamilyOutput): string {
       return diffScreen(output.stdout);
     case "version":
       return versionScreen(stripLf(output.stdout).slice("snap ".length));
+    case "help":
+      return helpScreen(output.stdout);
     case "silent":
     case "url":
       // §7.11: config remains silent; the --serve startup URL always

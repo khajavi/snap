@@ -7,6 +7,8 @@ steps:
         - {type: exit_code, value: 1}
         - {type: stdout_equals, value: ""}
         - {type: stderr_equals, value: "snap: invalid command or arguments\n"}
+  - run: {args: [--help, extra], expect: *invalid}
+  - run: {args: [status, --help], expect: *invalid}
   - run: {args: [init, a, b], expect: *invalid}
   - run: {args: [init, --unknown], expect: *invalid}
   - run:

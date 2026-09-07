@@ -120,6 +120,25 @@ export type CommandOutput = FamilyOutput;
 /** Lifts a command module's stdout-only result into a family-tagged output. */
 const asOutput = (stdout: string, family: OutputFamily): CommandOutput => ({ stdout, stderr: "", family });
 
+/**
+ * §7.10a's help text: one synopsis line per command in §7.1–§7.9, then
+ * `--version` and `--help`, in that order. Kept next to `dispatch`'s
+ * Version case, which consumes it for both output families.
+ */
+const HELP_TEXT = [
+  "usage: snap init [path]",
+  "usage: snap config [--global] contributor.id <id>",
+  "usage: snap status",
+  "usage: snap log",
+  "usage: snap commit <message>",
+  "usage: snap diff [<old> <new> [--repo <repository>]]",
+  "usage: snap revert <version>",
+  "usage: snap merge <repository>",
+  "usage: snap --serve [port]",
+  "usage: snap --version",
+  "usage: snap --help",
+].join("\n").concat("\n");
+
 // ---------------------------------------------------------------------------
 // The dispatch error union
 // ---------------------------------------------------------------------------
@@ -361,6 +380,10 @@ export function dispatch(
     case "Version":
       // §7.10's `snap <semver>` line; version-cmd supplies the semver.
       return Effect.map(versionCmd, (result) => asOutput(`snap ${result.version}\n`, { kind: "version" }));
+    case "Help":
+      // §7.10a's synopsis block; like `--version`, never locates a
+      // repository and touches nothing.
+      return Effect.succeed(asOutput(HELP_TEXT, { kind: "help" }));
     case "Serve":
       // §7.9: validate the port, then serve the startup snapshot. Startup
       // failures (invalid port already filtered by `serveCmd`; missing or

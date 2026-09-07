@@ -117,7 +117,8 @@ export type Command =
   | { readonly _tag: "Revert"; readonly version: string }
   | { readonly _tag: "Merge"; readonly repository: string }
   | { readonly _tag: "Serve"; readonly port: string | undefined }
-  | { readonly _tag: "Version" };
+  | { readonly _tag: "Version" }
+  | { readonly _tag: "Help" };
 
 // ---------------------------------------------------------------------------
 // The parser
@@ -162,6 +163,8 @@ export function parseArgs(argv: ReadonlyArray<string>): Either.Either<Command, A
       return parseServe(rest);
     case "--version":
       return parseVersion(rest);
+    case "--help":
+      return parseHelp(rest);
     default:
       return Either.left(invalidCommandOrArguments());
   }
@@ -270,4 +273,14 @@ function parseServe(rest: ReadonlyArray<string>): Either.Either<Command, ArgsErr
 function parseVersion(rest: ReadonlyArray<string>): Either.Either<Command, ArgsError> {
   if (rest.length > 0) return Either.left(invalidCommandOrArguments());
   return Either.right({ _tag: "Version" });
+}
+
+/**
+ * `snap --help` (§7.10a). Like `--version`, a top-level option recognized
+ * only as the first argument and taking no further arguments — anything
+ * after it is a grammar failure (tests/24 pins `--help extra`).
+ */
+function parseHelp(rest: ReadonlyArray<string>): Either.Either<Command, ArgsError> {
+  if (rest.length > 0) return Either.left(invalidCommandOrArguments());
+  return Either.right({ _tag: "Help" });
 }

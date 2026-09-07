@@ -11,6 +11,35 @@ steps:
         - type: stderr_equals
           value: ""
   - run:
+      args: [--help]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: |
+            usage: snap init [path]
+            usage: snap config [--global] contributor.id <id>
+            usage: snap status
+            usage: snap log
+            usage: snap commit <message>
+            usage: snap diff [<old> <new> [--repo <repository>]]
+            usage: snap revert <version>
+            usage: snap merge <repository>
+            usage: snap --serve [port]
+            usage: snap --version
+            usage: snap --help
+        - type: stderr_equals
+          value: ""
+  - run:
+      args: [--help, extra]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: invalid command or arguments\n"
+  - run:
       args: [status]
       expect:
         - type: exit_code

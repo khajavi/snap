@@ -53,6 +53,12 @@ steps:
         - {type: exit_code, value: 0}
         - {type: stdout_equals, value: "\u001b[1msnap 1.0.0\u001b[0m\n"}
         - {type: stderr_equals, value: ""}
+  - run:
+      args: [--help]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1musage:\u001b[0m usage: snap init [path]\n\u001b[1musage:\u001b[0m usage: snap config [--global] contributor.id <id>\n\u001b[1musage:\u001b[0m usage: snap status\n\u001b[1musage:\u001b[0m usage: snap log\n\u001b[1musage:\u001b[0m usage: snap commit <message>\n\u001b[1musage:\u001b[0m usage: snap diff [<old> <new> [--repo <repository>]]\n\u001b[1musage:\u001b[0m usage: snap revert <version>\n\u001b[1musage:\u001b[0m usage: snap merge <repository>\n\u001b[1musage:\u001b[0m usage: snap --serve [port]\n\u001b[1musage:\u001b[0m usage: snap --version\n\u001b[1musage:\u001b[0m usage: snap --help\n"}
+        - {type: stderr_equals, value: ""}
   - write_file: {path: repo/added.txt, text: "context\nnew\n"}
   - write_file: {path: repo/new.txt, text: "new\n"}
   - remove: {path: repo/gone.txt}
