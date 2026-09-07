@@ -693,8 +693,11 @@ trailing spaces of its own, and empty plain output remains empty.
   therefore wrapped by the header style, not the deletion style;
   `tests/28-terminal-presentation.yaml` pins this precedence.
 - `--version` is `S(1,"snap <semver>") + LF`.
-- `--help` wraps each synopsis line from §7.10a in `S(1,"usage:") + " " +
-  synopsis + LF`, preserving their order. Nothing else is styled.
+- `--help` restyles each §7.10a line's `usage:` label in `S(1)`, keeping the
+  synopsis after it unchanged: `S(1,"usage:") + " " + synopsis + LF`, where
+  `synopsis` is the command form without the label. Stripping the ANSI codes
+  from terminal help recovers the plain §7.10a block byte for byte. Nothing
+  else is styled.
 - A plain warning `warning: <detail>` becomes
   `S(33,"⚠") + " " + S(33,"<detail>") + LF`. A plain error line `<error>`
   becomes `S(31,"✗ " + <error>) + LF`.
